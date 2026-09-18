@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Sky } from './components/Sky';
 import { LocationSheet } from './components/LocationSheet';
 import { TabBar, type Page } from './components/TabBar';
@@ -8,7 +9,6 @@ import { Countdown } from './components/Countdown';
 import { PrayerBoard } from './components/PrayerBoard';
 import { Dial } from './components/Dial';
 import { DailyWidget } from './components/DailyWidget';
-import { DevotionsPage } from './components/DevotionsPage';
 import { METHOD_BY_KEY } from './lib/methods';
 import {
   PRAYER_META,
@@ -46,6 +46,7 @@ const loadQiblaPage = () => import('./components/QiblaPage');
 const loadQuranPage = () => import('./components/QuranPage');
 const loadMonthPage = () => import('./components/MonthSheet');
 const loadSettingsPage = () => import('./components/SettingsPage');
+const loadDevotionsPage = () => import('./components/DevotionsPage');
 const loadVerifySheet = () => import('./components/VerifySheet');
 const loadQuranData = () => import('./lib/quran').then((module) => module.loadQuran());
 
@@ -53,7 +54,14 @@ const QiblaPage = lazy(loadQiblaPage);
 const QuranPage = lazy(async () => ({ default: (await loadQuranPage()).QuranPage }));
 const MonthContent = lazy(async () => ({ default: (await loadMonthPage()).MonthContent }));
 const SettingsPage = lazy(loadSettingsPage);
+const DevotionsPage = lazy(async () => ({ default: (await loadDevotionsPage()).DevotionsPage }));
 const VerifySheet = lazy(async () => ({ default: (await loadVerifySheet()).VerifySheet }));
+
+const PAGE_ORDER: Page[] = ['times', 'qibla', 'quran', 'month', 'settings'];
+type PageDirection = 'forward' | 'backward';
+type TransitionDocument = Document & {
+  startViewTransition?: (update: () => void) => { finished: Promise<void> };
+};
 
 function preloadPage(page: Page) {
   if (page === 'qibla') return loadQiblaPage();
@@ -83,9 +91,47 @@ export default function App() {
   const scroller = useRef<HTMLDivElement>(null);
   useRubberBand(scroller);
   const [page, setPage] = useState<Page>('times');
+  const [pageDirection, setPageDirection] = useState<PageDirection>('forward');
   const [quranReading, setQuranReading] = useState(false);
   const [devotionsOpen, setDevotionsOpen] = useState(false);
   const [quranRequest, setQuranRequest] = useState<{ surah: number; token: number } | null>(null);
+  const transitionToken = useRef(0);
+
+  const openDevotions = useCallback(() => {
+    void loadDevotionsPage();
+    setDevotionsOpen(true);
+  }, []);
+
+  const navigateToPage = useCallback((nextPage: Page) => {
+    if (nextPage === page) return;
+    void preloadPage(nextPage);
+    const direction: PageDirection = PAGE_ORDER.indexOf(nextPage) >= PAGE_ORDER.indexOf(page)
+      ? 'forward'
+      : 'backward';
+    const commit = () => {
+      flushSync(() => {
+        setPageDirection(direction);
+        setPage(nextPage);
+      });
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    };
+    const transitionDocument = document as TransitionDocument;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!transitionDocument.startViewTransition || reducedMotion) {
+      commit();
+      return;
+    }
+    const token = ++transitionToken.current;
+    document.documentElement.dataset.pageDirection = direction;
+    document.documentElement.classList.add('page-transitioning');
+    const transition = transitionDocument.startViewTransition(commit);
+    const cleanup = () => {
+      if (transitionToken.current !== token) return;
+      document.documentElement.classList.remove('page-transitioning');
+      delete document.documentElement.dataset.pageDirection;
+    };
+    void transition.finished.then(cleanup, cleanup);
+  }, [page]);
 
   useEffect(() => {
     setNow(new Date());
@@ -247,15 +293,17 @@ export default function App() {
   if (devotionsOpen) {
     return (
       <div lang={language} dir={isArabic ? 'rtl' : 'ltr'} className="min-h-dvh bg-[var(--sky-bottom)]">
-        <DevotionsPage
-          onClose={() => setDevotionsOpen(false)}
-          onOpenMulk={() => {
-            setDevotionsOpen(false);
-            setQuranRequest({ surah: 67, token: Date.now() });
-            setPage('quran');
-            window.scrollTo(0, 0);
-          }}
-        />
+        <Suspense fallback={<PageFallback />}>
+          <DevotionsPage
+            onClose={() => setDevotionsOpen(false)}
+            onOpenMulk={() => {
+              void preloadPage('quran');
+              setDevotionsOpen(false);
+              setQuranRequest({ surah: 67, token: Date.now() });
+              navigateToPage('quran');
+            }}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -267,9 +315,10 @@ export default function App() {
     return (
       <div lang={language} dir={isArabic ? 'rtl' : 'ltr'} className="min-h-dvh bg-[var(--sky-bottom)]">
         <OfflineQuranShell
-          onBack={() => setPage('times')}
-          onOpenDevotions={() => setDevotionsOpen(true)}
-          onChangePage={setPage}
+          onBack={() => navigateToPage('times')}
+          onOpenDevotions={openDevotions}
+          onDevotionsIntent={() => void loadDevotionsPage()}
+          onChangePage={navigateToPage}
           openRequest={quranRequest}
         />
       </div>
@@ -279,10 +328,11 @@ export default function App() {
   if (!place || !days || !next) {
     return (
       <Onboarding
-        onOpenDevotions={() => setDevotionsOpen(true)}
+        onOpenDevotions={openDevotions}
+        onDevotionsIntent={() => void loadDevotionsPage()}
         onOpenQuran={() => {
           void preloadPage('quran');
-          setPage('quran');
+          navigateToPage('quran');
         }}
       />
     );
@@ -334,7 +384,11 @@ export default function App() {
           </button>
 
           <nav className="flex shrink-0 items-center">
-            <IconButton label={text('Dhikr and daily rituals', 'الذكر والأذكار اليومية')} onClick={() => setDevotionsOpen(true)}>
+            <IconButton
+              label={text('Dhikr and daily rituals', 'الذكر والأذكار اليومية')}
+              onIntent={() => void loadDevotionsPage()}
+              onClick={openDevotions}
+            >
               <circle cx="6" cy="6" r="2.1" stroke="currentColor" strokeWidth="1.5" />
               <circle cx="14" cy="6" r="2.1" stroke="currentColor" strokeWidth="1.5" />
               <circle cx="10" cy="13.7" r="2.1" stroke="currentColor" strokeWidth="1.5" />
@@ -348,6 +402,7 @@ export default function App() {
         </header>
         )}
 
+        <main key={page} className={`page-stage page-${pageDirection}`} data-page={page}>
         {page === 'times' && (
           <>
         <div className="mt-3 flex justify-center">
@@ -439,7 +494,7 @@ export default function App() {
         <footer className="mt-4 space-y-1.5 px-1 text-[11px] leading-relaxed text-[var(--ink-faint)] sm:text-xs">
           <p>
             <button
-              onClick={() => setPage('settings')}
+              onClick={() => navigateToPage('settings')}
               className="text-[var(--ink-dim)] underline underline-offset-4"
             >
               {methodLabel(method.key, method.label)}
@@ -502,6 +557,7 @@ export default function App() {
         {page === 'settings' && (
           <Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>
         )}
+        </main>
       </div>
 
       <LocationSheet open={sheet === 'location'} onClose={() => setSheet(null)} />
@@ -511,8 +567,9 @@ export default function App() {
       <TabBar
         page={page}
         onIntent={(nextPage) => void preloadPage(nextPage)}
-        onChange={setPage}
-        onOpenDevotions={() => setDevotionsOpen(true)}
+        onChange={navigateToPage}
+        onDevotionsIntent={() => void loadDevotionsPage()}
+        onOpenDevotions={openDevotions}
       />
     </div>
   );
@@ -521,11 +578,13 @@ export default function App() {
 function OfflineQuranShell({
   onBack,
   onOpenDevotions,
+  onDevotionsIntent,
   onChangePage,
   openRequest,
 }: {
   onBack: () => void;
   onOpenDevotions: () => void;
+  onDevotionsIntent: () => void;
   onChangePage: (page: Page) => void;
   openRequest: { surah: number; token: number } | null;
 }) {
@@ -551,6 +610,9 @@ function OfflineQuranShell({
             <button
               type="button"
               onClick={onOpenDevotions}
+              onPointerDown={onDevotionsIntent}
+              onPointerEnter={onDevotionsIntent}
+              onFocus={onDevotionsIntent}
               className="rounded-2xl px-3 py-2 text-sm text-[var(--ink-dim)] transition active:bg-white/10"
             >
               {text('Istighfar', 'الاستغفار')}
@@ -569,6 +631,7 @@ function OfflineQuranShell({
           page="quran"
           onIntent={(page) => void preloadPage(page)}
           onChange={onChangePage}
+          onDevotionsIntent={onDevotionsIntent}
           onOpenDevotions={onOpenDevotions}
         />
       )}

@@ -93,16 +93,19 @@ export function TabBar({
   page,
   onChange,
   onIntent,
+  onDevotionsIntent,
   onOpenDevotions,
 }: {
   page: Page;
   onChange: (page: Page) => void;
   onIntent?: (page: Page) => void;
+  onDevotionsIntent?: () => void;
   onOpenDevotions: () => void;
 }) {
   const { isArabic, text } = useI18n();
   const rail = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
   const items = useRef(new Map<Page, HTMLButtonElement>());
   const pinned = useRef(false);
   const pageRef = useRef(page);
@@ -148,19 +151,29 @@ export function TabBar({
         parseFloat(getComputedStyle(barEl).paddingLeft) +
         parseFloat(getComputedStyle(barEl).paddingRight);
       const inner = Math.max(0, open - pad);
+      const firstItemWidth = items.current.get('times')?.offsetWidth ?? inner / NAV_ITEM_COUNT;
       setOpenW(open);
       setInnerW(inner);
-      setShutW(pad + inner / NAV_ITEM_COUNT);
+      setShutW(pad + firstItemWidth);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(railEl);
+    const firstItem = items.current.get('times');
+    if (firstItem) observer.observe(firstItem);
     return () => observer.disconnect();
   }, []);
 
   useLayoutEffect(() => {
     const active = items.current.get(page);
-    if (active) setLens({ left: active.offsetLeft, width: active.offsetWidth });
+    const scrollEl = viewport.current;
+    if (!active || !scrollEl) return;
+    setLens({ left: active.offsetLeft, width: active.offsetWidth });
+    const maxScroll = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
+    const centered = active.offsetLeft - (scrollEl.clientWidth - active.offsetWidth) / 2;
+    const target = page === 'times' ? 0 : Math.min(maxScroll, Math.max(0, centered));
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scrollEl.scrollTo({ left: target, behavior: collapsed || reducedMotion ? 'auto' : 'smooth' });
   }, [page, innerW, collapsed]);
 
   const expand = () => {
@@ -194,7 +207,7 @@ export function TabBar({
   };
 
   const width = collapsed ? shutW || undefined : openW || undefined;
-  const gestures = useBarGesture(bar, (node) => {
+  const gestures = useBarGesture(viewport, (node) => {
     if (node.dataset.action === 'devotions') openDevotions();
     else select(node.dataset.tab as Page);
   }, collapsed);
@@ -204,7 +217,6 @@ export function TabBar({
       <div ref={rail} className="tabbar-rail">
         <div
           ref={bar}
-          {...gestures}
           className={`tabbar${collapsed ? ' is-collapsed' : ''}`}
           role="tablist"
           aria-label={text('Pages', 'الصفحات')}
@@ -213,7 +225,6 @@ export function TabBar({
               ? ({
                   width,
                   maxWidth: width,
-                  '--tabbar-inner': innerW ? `${innerW}px` : '100%',
                 } as CSSProperties)
               : undefined
           }
@@ -230,6 +241,7 @@ export function TabBar({
               }}
             />
           )}
+          <div ref={viewport} {...gestures} className="tabbar-scroll">
           <div className="tabbar-inner">
             {lens && (
               <span
@@ -276,6 +288,9 @@ export function TabBar({
                     aria-hidden={collapsed}
                     tabIndex={collapsed ? -1 : undefined}
                     aria-label={text('Open Istighfar and daily rituals', 'فتح الاستغفار والأذكار اليومية')}
+                    onPointerDown={onDevotionsIntent}
+                    onPointerEnter={onDevotionsIntent}
+                    onFocus={onDevotionsIntent}
                     onClick={openDevotions}
                     className="tabbar-item tabbar-devotions"
                     style={{ '--i': 1 } as CSSProperties}
@@ -293,6 +308,7 @@ export function TabBar({
                 )}
               </Fragment>
             ))}
+          </div>
           </div>
         </div>
       </div>

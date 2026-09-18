@@ -8,9 +8,11 @@ import { useI18n } from '../lib/i18n';
 
 export function Onboarding({
   onOpenDevotions,
+  onDevotionsIntent,
   onOpenQuran,
 }: {
   onOpenDevotions: () => void;
+  onDevotionsIntent: () => void;
   onOpenQuran: () => void;
 }) {
   const { setPlace, settings, patchSettings } = useStore();
@@ -83,6 +85,9 @@ export function Onboarding({
           <button
             type="button"
             onClick={onOpenDevotions}
+            onPointerDown={onDevotionsIntent}
+            onPointerEnter={onDevotionsIntent}
+            onFocus={onDevotionsIntent}
             className="rounded-2xl border border-[var(--card-line)] px-3 py-3 text-sm font-medium text-[var(--ink-dim)] transition active:bg-white/8 active:text-[var(--ink)]"
           >
             {text('Istighfar', 'الاستغفار')}

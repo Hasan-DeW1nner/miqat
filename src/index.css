@@ -573,6 +573,73 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
     0 8px 22px rgb(12 30 52 / 0.24);
 }
 
+/* ---------- page transitions ---------- */
+
+.page-stage {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  view-transition-name: miqat-page;
+}
+
+@keyframes page-enter-forward {
+  from { opacity: 0; transform: translate3d(16px, 0, 0) scale(0.996); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes page-enter-backward {
+  from { opacity: 0; transform: translate3d(-16px, 0, 0) scale(0.996); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes page-exit-forward {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(-10px, 0, 0) scale(0.998); }
+}
+
+@keyframes page-exit-backward {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(10px, 0, 0) scale(0.998); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .page-stage.page-forward {
+    animation: page-enter-forward 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .page-stage.page-backward {
+    animation: page-enter-backward 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  html.page-transitioning .page-stage {
+    animation: none;
+  }
+
+  ::view-transition-old(miqat-page),
+  ::view-transition-new(miqat-page) {
+    mix-blend-mode: normal;
+    animation-duration: 0.34s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  html[data-page-direction='forward']::view-transition-old(miqat-page) {
+    animation-name: page-exit-forward;
+  }
+
+  html[data-page-direction='forward']::view-transition-new(miqat-page) {
+    animation-name: page-enter-forward;
+  }
+
+  html[data-page-direction='backward']::view-transition-old(miqat-page) {
+    animation-name: page-exit-backward;
+  }
+
+  html[data-page-direction='backward']::view-transition-new(miqat-page) {
+    animation-name: page-enter-backward;
+  }
+}
+
 /* ---------- bottom navigation ---------- */
 
 .tabbar-dock {
@@ -637,12 +704,34 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
     box-shadow 0.4s ease;
 }
 
+.tabbar-scroll {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 1.2rem;
+  overscroll-behavior-inline: auto;
+  scroll-padding-inline: 0.45rem;
+  scrollbar-width: none;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabbar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tabbar.is-collapsed .tabbar-scroll {
+  overflow: hidden;
+}
+
 .tabbar-inner {
   position: relative;
   display: flex;
   isolation: isolate;
-  width: var(--tabbar-inner, 100%);
-  min-width: var(--tabbar-inner, 100%);
+  width: max-content;
+  min-width: 100%;
   height: 100%;
 }
 
@@ -725,12 +814,13 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   white-space: nowrap;
   position: relative;
   z-index: 1;
-  flex: 1 0 0;
+  min-width: 4.85rem;
+  flex: 0 0 4.85rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.2rem;
-  padding: 0.5rem 0.25rem 0.45rem;
+  padding: 0.52rem 0.45rem 0.47rem;
   border-radius: 1.2rem;
   transform: translateZ(0);
   transition:
@@ -738,6 +828,10 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
     opacity 0.4s cubic-bezier(0.32, 0.72, 0, 1),
     transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
   transition-delay: calc(var(--i, 0) * 28ms);
+}
+
+.tabbar-item[aria-selected='true'] {
+  touch-action: pan-y;
 }
 
 /* Preserve the dock's geometry and glass lens; only the touched item gains a
@@ -775,9 +869,9 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
 }
 
 .tabbar, .segmented {
-  touch-action: pan-y;
   transition: transform 560ms cubic-bezier(.2,.85,.2,1.15), width 580ms cubic-bezier(.32,.72,0,1), max-width 580ms cubic-bezier(.32,.72,0,1);
 }
+.segmented { touch-action: pan-y; }
 .tabbar:active, .segmented:active {
   transform: perspective(900px) translateY(1px) rotateX(1deg) scale(.995);
   transition-duration: 180ms;

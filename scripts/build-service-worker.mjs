@@ -32,7 +32,7 @@ const essentialFiles = files.filter(({ relative }) =>
   relative === '/index.html' ||
   relative === '/manifest.webmanifest' ||
   /^\/(?:apple-touch-icon(?:-[^/]+)?\.png|favicon-32\.png|icon(?:-\d+)?\.(?:png|svg))$/.test(relative) ||
-  /^\/assets\/(?:index-|QuranPage-|quran-)/.test(relative),
+  /^\/assets\/(?:index-|DevotionsPage-|QuranPage-|quran-)/.test(relative),
 );
 const urls = ['/', ...essentialFiles.map((file) => file.relative), '/sw.js'];
 
