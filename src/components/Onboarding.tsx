@@ -101,7 +101,7 @@ export function Onboarding({
           </button>
         </div>
         <p className="mt-2 text-[11px] text-[var(--ink-faint)]">
-          {text('These two pages remain available offline after the app has been opened once.', 'يبقى هذان القسمان متاحين دون اتصال بعد فتح التطبيق مرة واحدة.')}
+          {text('Both work without a location. To keep them for a walk with no signal, download them in Settings › Offline.', 'كلاهما يعمل دون تحديد موقع. وللاحتفاظ بهما أثناء المشي بلا تغطية، نزّلهما من الإعدادات ← دون اتصال.')}
         </p>
 
         {error && <p className="mt-4 text-sm leading-relaxed text-[var(--accent)]">{error}</p>}

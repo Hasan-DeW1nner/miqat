@@ -3,6 +3,8 @@ import { flushSync } from 'react-dom';
 import { Sky } from './components/Sky';
 import { LocationSheet } from './components/LocationSheet';
 import { TabBar, type Page } from './components/TabBar';
+import { PageShell } from './components/PageShell';
+import { useOfflineKeeper } from './lib/useOfflineKeeper';
 import { Onboarding } from './components/Onboarding';
 import { Segmented } from './components/Segmented';
 import { Countdown } from './components/Countdown';
@@ -59,6 +61,8 @@ const VerifySheet = lazy(async () => ({ default: (await loadVerifySheet()).Verif
 
 const PAGE_ORDER: Page[] = ['times', 'qibla', 'quran', 'month', 'settings'];
 type PageDirection = 'forward' | 'backward';
+/** How long a tap waits for a page's chunk before transitioning regardless. */
+const CHUNK_WAIT_MS = 220;
 type TransitionDocument = Document & {
   startViewTransition?: (update: () => void) => { finished: Promise<void> };
 };
@@ -80,6 +84,8 @@ function PageFallback() {
 }
 
 export default function App() {
+  // Re-fetches whatever the reader chose to keep, after a deploy renames it.
+  useOfflineKeeper();
   const place = useStore((state) => state.place);
   const settings = useStore((state) => state.settings);
   const viewMode = useStore((state) => state.viewMode);
@@ -102,9 +108,8 @@ export default function App() {
     setDevotionsOpen(true);
   }, []);
 
-  const navigateToPage = useCallback((nextPage: Page) => {
+  const navigateToPage = useCallback(async (nextPage: Page) => {
     if (nextPage === page) return;
-    void preloadPage(nextPage);
     const direction: PageDirection = PAGE_ORDER.indexOf(nextPage) >= PAGE_ORDER.indexOf(page)
       ? 'forward'
       : 'backward';
@@ -115,6 +120,26 @@ export default function App() {
       });
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     };
+
+    /*
+     * Wait for the page's chunk before starting the transition.
+     *
+     * A view transition snapshots the old DOM, runs the commit, then animates
+     * to whatever was rendered. Committing while the lazy chunk is still in
+     * flight renders the Suspense fallback instead, so the animation ran from
+     * the old page to a loading spinner and the real page popped in afterwards
+     * with no animation at all. Warm caches hid it, which is why it looked
+     * intermittent.
+     *
+     * The race keeps a slow network from freezing the tap: past the deadline we
+     * go anyway and the fallback becomes an honest loading state rather than a
+     * flash in the middle of a transition.
+     */
+    await Promise.race([
+      preloadPage(nextPage).catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, CHUNK_WAIT_MS)),
+    ]);
+
     const transitionDocument = document as TransitionDocument;
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!transitionDocument.startViewTransition || reducedMotion) {
@@ -293,7 +318,7 @@ export default function App() {
   if (devotionsOpen) {
     return (
       <div lang={language} dir={isArabic ? 'rtl' : 'ltr'} className="min-h-dvh bg-[var(--sky-bottom)]">
-        <Suspense fallback={<PageFallback />}>
+        <PageShell page="devotions" fallback={<PageFallback />}>
           <DevotionsPage
             onClose={() => setDevotionsOpen(false)}
             onOpenMulk={() => {
@@ -303,7 +328,7 @@ export default function App() {
               navigateToPage('quran');
             }}
           />
-        </Suspense>
+        </PageShell>
       </div>
     );
   }
@@ -539,23 +564,23 @@ export default function App() {
         )}
 
         {page === 'qibla' && (
-          <Suspense fallback={<PageFallback />}><QiblaPage bearing={qibla} /></Suspense>
+          <PageShell page="qibla" fallback={<PageFallback />}><QiblaPage bearing={qibla} /></PageShell>
         )}
 
         {page === 'quran' && (
           <section className={quranReading ? '' : 'flex-1 py-2'}>
-            <Suspense fallback={<PageFallback />}><QuranPage onReading={setQuranReading} openRequest={quranRequest} /></Suspense>
+            <PageShell page="quran" fallback={<PageFallback />}><QuranPage onReading={setQuranReading} openRequest={quranRequest} /></PageShell>
           </section>
         )}
 
         {page === 'month' && (
           <section className="flex-1 py-4">
-            <Suspense fallback={<PageFallback />}><MonthContent /></Suspense>
+            <PageShell page="month" fallback={<PageFallback />}><MonthContent /></PageShell>
           </section>
         )}
 
         {page === 'settings' && (
-          <Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>
+          <PageShell page="settings" fallback={<PageFallback />}><SettingsPage /></PageShell>
         )}
         </main>
       </div>
@@ -620,9 +645,9 @@ function OfflineQuranShell({
           </header>
         )}
         <section className={reading ? '' : 'flex-1 py-2'}>
-          <Suspense fallback={<PageFallback />}>
+          <PageShell page="quran" fallback={<PageFallback />}>
             <QuranPage onReading={setReading} openRequest={openRequest} />
-          </Suspense>
+          </PageShell>
         </section>
       </div>
 

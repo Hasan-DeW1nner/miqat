@@ -5,11 +5,28 @@ import { methodForPlace } from './methods';
 import type { Place } from './geo';
 import type { QuranBookmark, ReciterId } from './quran';
 import { readPreferenceCookie } from './preferenceCookie';
+import type { OfflinePage } from './offline';
 
-export type DhikrKind = 'istighfar' | 'tasbih' | 'tahmid' | 'takbir';
-export type DhikrCounts = Record<DhikrKind, number>;
+export const BUILTIN_DHIKR = ['istighfar', 'tasbih', 'tahmid', 'takbir'] as const;
+export type BuiltinDhikr = (typeof BUILTIN_DHIKR)[number];
 
-const EMPTY_DHIKR: DhikrCounts = { istighfar: 0, tasbih: 0, tahmid: 0, takbir: 0 };
+/**
+ * Open on purpose: a counter may be one of the four built-ins or a phrase the
+ * user typed, which carries an id of its own. History is keyed by these strings
+ * either way, so opening the type keeps every day already counted.
+ */
+export type DhikrKind = string;
+export type DhikrCounts = Record<string, number>;
+
+/** A phrase the user added themselves. Arabic is the only required part. */
+export interface CustomDhikr {
+  id: string;
+  arabic: string;
+  transliteration?: string;
+  meaning?: string;
+}
+
+const EMPTY_DHIKR: DhikrCounts = {};
 
 interface State {
   place: Place | null;
@@ -38,6 +55,17 @@ interface State {
   dhikrHistory: Record<string, DhikrCounts>;
   recordDhikr: (day: string, kind: DhikrKind, amount: number) => void;
   resetDhikr: (day: string, kind: DhikrKind) => void;
+  /** Phrases the user added. Stored on the device with everything else. */
+  customDhikr: CustomDhikr[];
+  addCustomDhikr: (entry: Omit<CustomDhikr, 'id'>) => string;
+  updateCustomDhikr: (id: string, patch: Partial<Omit<CustomDhikr, 'id'>>) => void;
+  removeCustomDhikr: (id: string) => void;
+  /**
+   * Pages the reader chose to keep on the device. The service worker holds the
+   * files; this is the intent, so a new build can fetch them again.
+   */
+  offlinePages: OfflinePage[];
+  setOfflinePage: (page: OfflinePage, keep: boolean) => void;
   /** Checked morning/evening rituals, grouped by local calendar day. */
   ritualChecks: Record<string, string[]>;
   toggleRitual: (day: string, ritualId: string) => void;
@@ -105,7 +133,7 @@ export const useStore = create<State>()(
           return {
             dhikrHistory: {
               ...state.dhikrHistory,
-              [day]: { ...existing, [kind]: existing[kind] + Math.floor(amount) },
+              [day]: { ...existing, [kind]: (existing[kind] ?? 0) + Math.floor(amount) },
             },
           };
         });
@@ -121,6 +149,27 @@ export const useStore = create<State>()(
             },
           };
         }),
+      customDhikr: [],
+      addCustomDhikr: (entry) => {
+        const id = `custom:${crypto.randomUUID()}`;
+        set((state) => ({ customDhikr: [...state.customDhikr, { ...entry, id }] }));
+        return id;
+      },
+      updateCustomDhikr: (id, patch) =>
+        set((state) => ({
+          customDhikr: state.customDhikr.map((item) =>
+            item.id === id ? { ...item, ...patch } : item,
+          ),
+        })),
+      removeCustomDhikr: (id) =>
+        set((state) => ({ customDhikr: state.customDhikr.filter((item) => item.id !== id) })),
+      offlinePages: [],
+      setOfflinePage: (page, keep) =>
+        set((state) => ({
+          offlinePages: keep
+            ? state.offlinePages.includes(page) ? state.offlinePages : [...state.offlinePages, page]
+            : state.offlinePages.filter((id) => id !== page),
+        })),
       ritualChecks: {},
       toggleRitual: (day, ritualId) =>
         set((state) => {
@@ -162,7 +211,15 @@ export const useStore = create<State>()(
             saved.place.longitude,
           );
         }
-        return { ...current, ...(cookie ?? {}), ...saved, settings };
+        return {
+          ...current,
+          ...(cookie ?? {}),
+          ...saved,
+          settings,
+          // Older saved state predates custom phrases and offline downloads.
+          customDhikr: saved?.customDhikr ?? [],
+          offlinePages: saved?.offlinePages ?? [],
+        };
       },
     },
   ),

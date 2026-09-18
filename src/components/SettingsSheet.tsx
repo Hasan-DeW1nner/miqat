@@ -9,17 +9,19 @@ import { DIAL_STYLES, Dial } from './Dial';
 import { ClockFormatPreview, IqamaPreview, LayoutPreview, OffsetPreview } from './SettingPreview';
 import { NotifySetting } from './NotifySetting';
 import { PrivacySetting } from './PrivacySetting';
+import { OfflineSetting } from './OfflineSetting';
 import { useI18n } from '../lib/i18n';
 import type { ClockStyle } from './Countdown';
 import type { DialStyle } from './Dial';
 
-type Tab = 'display' | 'iqama' | 'calculation' | 'fine' | 'privacy';
+type Tab = 'display' | 'iqama' | 'calculation' | 'fine' | 'offline' | 'privacy';
 
 const TABS: { id: Tab; label: string; labelAr: string }[] = [
   { id: 'display', label: 'Display', labelAr: 'العرض' },
   { id: 'iqama', label: 'Iqama', labelAr: 'الإقامة' },
   { id: 'calculation', label: 'Method', labelAr: 'الحساب' },
   { id: 'fine', label: 'Fine tune', labelAr: 'الضبط' },
+  { id: 'offline', label: 'Offline', labelAr: 'دون اتصال' },
   { id: 'privacy', label: 'Privacy', labelAr: 'الخصوصية' },
 ];
 
@@ -371,6 +373,8 @@ export function SettingsContent() {
           )}
         </div>
       )}
+
+      {tab === 'offline' && <OfflineSetting />}
 
       {tab === 'privacy' && <PrivacySetting />}
 

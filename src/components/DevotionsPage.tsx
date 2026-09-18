@@ -2,17 +2,74 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Segmented } from './Segmented';
 import { haptic, isIOS } from '../lib/feel';
 import { useI18n } from '../lib/i18n';
-import { useStore, type DhikrCounts, type DhikrKind } from '../lib/store';
+import { useStore, type CustomDhikr, type DhikrCounts, type DhikrKind } from '../lib/store';
 
 type Section = 'counter' | 'rituals';
 type RitualPeriod = 'morning' | 'evening' | 'mulk';
 
-const PHRASES: Record<DhikrKind, { en: string; ar: string; shortEn: string; shortAr: string }> = {
-  istighfar: { en: 'Astaghfirullāh', ar: 'أستغفر الله', shortEn: 'Istighfar', shortAr: 'استغفار' },
+interface Phrase {
+  en: string;
+  ar: string;
+  shortEn: string;
+  shortAr: string;
+  /** Only ever a reference we can point at, never a claim from memory. */
+  virtueEn?: string;
+  virtueAr?: string;
+  source?: string;
+  custom?: boolean;
+}
+
+/*
+ * Virtues carry a Qur'anic citation or nothing at all.
+ *
+ * The reward attached to Sayyid al-Istighfar, and the counts attached to
+ * tasbih, come from hadith. Getting a hadith's wording or its grading slightly
+ * wrong is worse than staying quiet, so those slots stay empty until the text
+ * comes from a source that has been checked — not from recall. Where the dhikr
+ * is itself Qur'anic the reference is exact and is shown.
+ */
+const PHRASES: Record<string, Phrase> = {
+  istighfar: {
+    en: 'Astaghfirullāh',
+    ar: 'أستغفر الله',
+    shortEn: 'Istighfar',
+    shortAr: 'استغفار',
+    virtueEn:
+      'Ask forgiveness of your Lord; indeed He is ever Forgiving. He will send the sky upon you in showers, and increase you in wealth and children.',
+    virtueAr:
+      'اسْتَغْفِرُوا رَبَّكُمْ إِنَّهُ كَانَ غَفَّارًا • يُرْسِلِ السَّمَاءَ عَلَيْكُم مِّدْرَارًا • وَيُمْدِدْكُم بِأَمْوَالٍ وَبَنِينَ',
+    source: 'Qur’an 71:10–12',
+  },
   tasbih: { en: 'Subḥān Allāh', ar: 'سبحان الله', shortEn: 'Tasbih', shortAr: 'تسبيح' },
   tahmid: { en: 'Alḥamdulillāh', ar: 'الحمد لله', shortEn: 'Tahmid', shortAr: 'تحميد' },
   takbir: { en: 'Allāhu akbar', ar: 'الله أكبر', shortEn: 'Takbir', shortAr: 'تكبير' },
+  yunus: {
+    en: 'Lā ilāha illā anta, subḥānaka innī kuntu mina ẓ-ẓālimīn',
+    ar: 'لَا إِلَٰهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ',
+    shortEn: 'Du’ā Yūnus',
+    shortAr: 'دعاء يونس',
+    virtueEn:
+      'The call of Yūnus from the darkness. “So We responded to him and saved him from distress — and thus do We save the believers.”',
+    virtueAr:
+      'فَاسْتَجَبْنَا لَهُ وَنَجَّيْنَاهُ مِنَ الْغَمِّ ۚ وَكَذَٰلِكَ نُنجِي الْمُؤْمِنِينَ',
+    source: 'Qur’an 21:87–88',
+  },
 };
+
+const BUILTIN_ORDER = ['istighfar', 'tasbih', 'tahmid', 'takbir', 'yunus'];
+
+function customToPhrase(entry: CustomDhikr): Phrase {
+  const short = entry.arabic.trim().split(/\s+/).slice(0, 2).join(' ');
+  return {
+    ar: entry.arabic,
+    en: entry.transliteration?.trim() || entry.arabic,
+    shortAr: short,
+    shortEn: entry.transliteration?.trim().split(/\s+/).slice(0, 2).join(' ') || short,
+    virtueEn: entry.meaning,
+    virtueAr: entry.meaning,
+    custom: true,
+  };
+}
 
 interface RitualItem {
   id: string;
@@ -208,12 +265,145 @@ export function DevotionsPage({
   );
 }
 
+/**
+ * Add or remove a phrase of your own.
+ *
+ * Arabic is the only thing required — a transliteration and a meaning are
+ * offered because they make the counter readable to someone who wants them,
+ * not because the dhikr needs them.
+ */
+function CustomDhikrEditor({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const { text, isArabic } = useI18n();
+  const customDhikr = useStore((state) => state.customDhikr);
+  const addCustomDhikr = useStore((state) => state.addCustomDhikr);
+  const removeCustomDhikr = useStore((state) => state.removeCustomDhikr);
+  const [arabic, setArabic] = useState('');
+  const [transliteration, setTransliteration] = useState('');
+  const [meaning, setMeaning] = useState('');
+
+  const save = () => {
+    const trimmed = arabic.trim();
+    if (!trimmed) return;
+    const id = addCustomDhikr({
+      arabic: trimmed,
+      transliteration: transliteration.trim() || undefined,
+      meaning: meaning.trim() || undefined,
+    });
+    haptic('lock');
+    onCreated(id);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+      <button type="button" aria-label={text('Close', 'إغلاق')} onClick={onClose}
+        className="absolute inset-0 bg-black/55 backdrop-blur-sm" />
+      <div role="dialog" aria-modal="true"
+        className="card rise relative flex max-h-[88vh] w-full max-w-lg flex-col rounded-t-3xl px-6 py-5 sm:rounded-3xl">
+        <h2 className="text-lg font-semibold tracking-tight">
+          {text('Your own dhikr', 'ذكرك الخاص')}
+        </h2>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--ink-dim)]">
+          {text(
+            'Type the words you want to count. They stay on this device.',
+            'اكتب الكلمات التي تريد عدّها. تبقى على هذا الجهاز.',
+          )}
+        </p>
+
+        <div className="mt-4 space-y-3 overflow-y-auto">
+          <label className="block">
+            <span className="text-[13px] font-medium text-[var(--ink-dim)]">
+              {text('Arabic', 'بالعربية')}
+            </span>
+            <textarea
+              value={arabic}
+              onChange={(event) => setArabic(event.target.value)}
+              rows={2}
+              dir="rtl"
+              placeholder="لا إله إلا أنت سبحانك إني كنت من الظالمين"
+              className="arabic mt-2 w-full resize-none rounded-xl border border-[var(--card-line)] bg-black/25 px-3.5 py-3 text-lg leading-relaxed outline-none focus:border-[var(--accent-soft)]"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[13px] font-medium text-[var(--ink-dim)]">
+              {text('Transliteration (optional)', 'النطق بالحروف اللاتينية (اختياري)')}
+            </span>
+            <input value={transliteration} onChange={(event) => setTransliteration(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-[var(--card-line)] bg-black/25 px-3.5 py-2.5 text-sm outline-none focus:border-[var(--accent-soft)]" />
+          </label>
+          <label className="block">
+            <span className="text-[13px] font-medium text-[var(--ink-dim)]">
+              {text('Meaning (optional)', 'المعنى (اختياري)')}
+            </span>
+            <input value={meaning} onChange={(event) => setMeaning(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-[var(--card-line)] bg-black/25 px-3.5 py-2.5 text-sm outline-none focus:border-[var(--accent-soft)]" />
+          </label>
+
+          {customDhikr.length > 0 && (
+            <div className="pt-1">
+              <span className="text-[13px] font-medium text-[var(--ink-dim)]">
+                {text('Yours', 'أذكارك')}
+              </span>
+              <ul className="mt-2 space-y-1.5">
+                {customDhikr.map((entry) => (
+                  <li key={entry.id}
+                    className="flex items-center gap-3 rounded-xl border border-[var(--card-line)] px-3 py-2">
+                    <span className="arabic min-w-0 flex-1 truncate text-base" dir="rtl">{entry.arabic}</span>
+                    <button type="button" onClick={() => { removeCustomDhikr(entry.id); haptic('tick'); }}
+                      className="shrink-0 text-xs text-[var(--ink-dim)] underline underline-offset-4">
+                      {text('Remove', 'حذف')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11px] leading-relaxed text-[var(--ink-faint)]">
+                {text(
+                  'Removing a phrase keeps the days you already counted.',
+                  'حذف الذكر لا يمحو الأيام التي عددتها.',
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={onClose}
+            className="flex-1 rounded-2xl border border-[var(--card-line)] px-5 py-3 text-sm font-medium">
+            {text('Close', 'إغلاق')}
+          </button>
+          <button type="button" onClick={save} disabled={!arabic.trim()}
+            className="flex-1 rounded-2xl bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--on-accent)] disabled:opacity-50">
+            {isArabic ? 'إضافة' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DhikrCounter() {
   const { language, isArabic, locale, text } = useI18n();
   const dhikrHistory = useStore((state) => state.dhikrHistory);
   const recordDhikr = useStore((state) => state.recordDhikr);
   const resetDhikr = useStore((state) => state.resetDhikr);
+  const customDhikr = useStore((state) => state.customDhikr);
   const [kind, setKind] = useState<DhikrKind>('istighfar');
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  const phrases = useMemo(() => {
+    const merged: Record<string, Phrase> = { ...PHRASES };
+    for (const entry of customDhikr) merged[entry.id] = customToPhrase(entry);
+    return merged;
+  }, [customDhikr]);
+  const order = useMemo(
+    () => [...BUILTIN_ORDER, ...customDhikr.map((entry) => entry.id)],
+    [customDhikr],
+  );
   const sessionSignalRef = useRef<SessionSignal | null>(null);
   if (!sessionSignalRef.current) sessionSignalRef.current = { value: 0, listeners: new Set() };
   const sessionSignal = sessionSignalRef.current;
@@ -238,9 +428,14 @@ function DhikrCounter() {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush();
     };
+    // Taps are held for 450ms before being written, so every way out of the
+    // page has to bank them first. `pagehide` is the one that fires when iOS
+    // discards a backgrounded tab, which `visibilitychange` alone can miss.
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
       flush();
     };
   }, [flush]);
@@ -304,7 +499,10 @@ function DhikrCounter() {
     setUnlocking(false);
   };
 
-  const phrase = PHRASES[kind];
+  const phrase = phrases[kind] ?? phrases.istighfar;
+  useEffect(() => {
+    if (!phrases[kind]) setKind('istighfar');
+  }, [phrases, kind]);
   const todayTotal = countFor(dhikrHistory[today], kind) + pending.current;
   const totals = useMemo(() => {
     const sum = (days: number) => Array.from({ length: days }, (_, i) =>
@@ -356,26 +554,51 @@ function DhikrCounter() {
 
   return (
     <section className="pb-8 pt-5">
-      <div className="grid grid-cols-4 gap-2 pb-1">
-        {(Object.keys(PHRASES) as DhikrKind[]).map((id) => (
+      <div className="flex flex-wrap gap-2 pb-1">
+        {order.map((id) => (
           <button
             type="button"
             key={id}
             onClick={() => chooseKind(id)}
             className={`dhikr-kind min-w-0${kind === id ? ' is-active' : ''}`}
           >
-            {language === 'ar' ? PHRASES[id].shortAr : PHRASES[id].shortEn}
+            {language === 'ar' ? phrases[id].shortAr : phrases[id].shortEn}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => { setEditorOpen(true); haptic('soft'); }}
+          className="dhikr-kind dhikr-kind-add"
+          aria-label={text('Add your own dhikr', 'أضف ذكرًا خاصًا بك')}
+        >
+          +
+        </button>
       </div>
 
       <div className="mt-8 text-center">
         <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--ink-faint)]">{text('This session', 'هذه الجلسة')}</p>
         <SessionNumber signal={sessionSignal} locale={locale} className="tabular mt-2 text-6xl font-light tracking-tight" />
         <p className="mt-2 text-sm text-[var(--ink-dim)]">{isArabic ? phrase.ar : phrase.en}</p>
+        {(isArabic ? phrase.virtueAr : phrase.virtueEn) && (
+          <div className="dhikr-virtue mx-auto mt-3 max-w-sm">
+            <p className={isArabic ? 'arabic text-[13px] leading-relaxed' : 'text-[13px] leading-relaxed'}>
+              {isArabic ? phrase.virtueAr : phrase.virtueEn}
+            </p>
+            {phrase.source && (
+              <p className="mt-1 text-[11px] text-[var(--ink-faint)]">{phrase.source}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <CounterButton phrase={isArabic ? phrase.ar : phrase.en} onPress={increment} />
+
+      {editorOpen && (
+        <CustomDhikrEditor
+          onClose={() => setEditorOpen(false)}
+          onCreated={(id: string) => { setEditorOpen(false); chooseKind(id); }}
+        />
+      )}
 
       <div className="mt-7 flex items-center justify-center gap-3">
         <button type="button" onClick={() => { flush(); setFocusLocked(true); haptic('lock'); }} className="devotion-control">
@@ -435,6 +658,20 @@ function DhikrCounter() {
       </div>
     </section>
   );
+}
+
+/*
+ * A circle is the worst shape to set text in: the usable width shrinks toward
+ * the top and bottom, so a long du'a that "fits" the box still collides with
+ * the curve. The phrase is therefore held to a chord well inside the rim and
+ * stepped down in size as it lengthens, rather than being allowed to clip.
+ */
+function phraseFit(phrase: string): string {
+  const length = phrase.trim().length;
+  if (length <= 14) return 'counter-phrase is-short';
+  if (length <= 28) return 'counter-phrase is-medium';
+  if (length <= 48) return 'counter-phrase is-long';
+  return 'counter-phrase is-very-long';
 }
 
 function CounterButton({ phrase, onPress, locked = false }: { phrase: string; onPress: () => void; locked?: boolean }) {
@@ -523,7 +760,7 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
   const content = <>
     <span className="counter-button-rim" aria-hidden="true" />
     <span className="relative z-10 block text-[11px] uppercase tracking-[0.18em] opacity-60">{text('Tap to count', 'اضغط للعد')}</span>
-    <span className="relative z-10 mt-2 block text-xl font-semibold">{phrase}</span>
+    <span className={`relative z-10 mt-2 block font-semibold ${phraseFit(phrase)}`}>{phrase}</span>
     <span dir="ltr" className="relative z-10 mt-3 block text-sm font-medium opacity-55">+1</span>
   </>;
   if (isIOS) return <div className={`counter-plinth mx-auto mt-7${locked ? ' is-locked' : ''}`}>
@@ -548,7 +785,7 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
       >
         <span className="counter-button-rim" aria-hidden="true" />
         <span className="relative z-10 block text-[11px] uppercase tracking-[0.18em] opacity-60">{text('Tap to count', 'اضغط للعد')}</span>
-        <span className="relative z-10 mt-2 block text-xl font-semibold">{phrase}</span>
+        <span className={`relative z-10 mt-2 block font-semibold ${phraseFit(phrase)}`}>{phrase}</span>
         <span className="relative z-10 mt-3 block text-sm font-medium opacity-55">+1</span>
       </button>
     </div>

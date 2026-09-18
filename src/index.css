@@ -1017,6 +1017,33 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   height: min(62vw, 14rem);
 }
 
+/* Held to a chord inside the rim so long phrases never meet the curve. */
+.counter-phrase {
+  max-width: 72%;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  hyphens: none;
+}
+
+.counter-phrase.is-short { font-size: 1.25rem; line-height: 1.35; }
+.counter-phrase.is-medium { font-size: 1.05rem; line-height: 1.45; }
+.counter-phrase.is-long { font-size: 0.9rem; line-height: 1.6; max-width: 66%; }
+.counter-phrase.is-very-long { font-size: 0.78rem; line-height: 1.65; max-width: 62%; }
+
+.dhikr-kind-add {
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.dhikr-virtue {
+  border-inline-start: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-inline-start: 0.75rem;
+  text-align: start;
+  color: var(--ink-dim);
+}
+
 .counter-button {
   position: absolute;
   inset: 0;
