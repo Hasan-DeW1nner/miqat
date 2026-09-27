@@ -165,6 +165,7 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
 
 .mushaf-page {
   min-height: 100dvh;
+  overflow-x: clip;
   background: #f3ead4;
   color: #1a140c;
   animation: mushaf-in 0.38s cubic-bezier(0.32, 0.72, 0, 1);
@@ -262,9 +263,11 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   min-height: calc(100dvh - 4rem);
   margin: 0 auto;
   padding: 1.25rem 1.15rem 6rem;
-  background: linear-gradient(90deg, #e8d9b8 0, #f8f0de 2.5%, #fbf6e9 50%, #f3e7cd 100%);
+  background:
+    linear-gradient(90deg, rgb(163 121 61 / 0.08), transparent 3.5%, transparent 96.5%, rgb(163 121 61 / 0.08)),
+    #fbf5e8;
   box-shadow: inset 1px 0 #d9c49a, inset -1px 0 #d9c49a, 0 12px 34px rgb(73 49 17 / 0.11);
-  transform-origin: left center;
+  transform-origin: right center;
   touch-action: pan-y;
 }
 
@@ -272,11 +275,58 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   content: '';
   position: absolute;
   inset: 0.5rem;
-  border: 1px solid rgb(176 137 75 / 0.3);
+  border: 1px solid rgb(176 137 75 / 0.38);
+  box-shadow: inset 0 0 0 4px rgb(176 137 75 / 0.07);
   pointer-events: none;
 }
 
+.mushaf-frame {
+  position: absolute;
+  inset: 0.85rem;
+  border: 1px solid rgb(176 137 75 / 0.22);
+  pointer-events: none;
+}
+
+.mushaf-frame::before,
+.mushaf-frame::after {
+  content: '';
+  position: absolute;
+  inset-inline: 5.1rem;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #bb9a67, transparent);
+}
+
+.mushaf-frame::before { top: 0; }
+.mushaf-frame::after { bottom: 0; }
+
+.mushaf-corner {
+  position: absolute;
+  width: 4.8rem;
+  height: 4.8rem;
+  color: #bd995f;
+  opacity: 0.8;
+}
+
+.mushaf-corner.is-top-left { top: -0.2rem; left: -0.2rem; }
+.mushaf-corner.is-top-right { top: -0.2rem; right: -0.2rem; transform: scaleX(-1); }
+.mushaf-corner.is-bottom-left { bottom: -0.2rem; left: -0.2rem; transform: scaleY(-1); }
+.mushaf-corner.is-bottom-right { bottom: -0.2rem; right: -0.2rem; transform: scale(-1); }
+
+.mushaf-sheet:is(.is-opening, .is-second) .mushaf-frame {
+  inset: 0.8rem;
+  border: 2px solid #a9854e;
+  box-shadow: inset 0 0 0 4px #f4e8cc, inset 0 0 0 5px #c8a870;
+}
+
+.mushaf-sheet:is(.is-opening, .is-second) .mushaf-corner {
+  width: 5.4rem;
+  height: 5.4rem;
+  color: #9b743c;
+  opacity: 1;
+}
+
 .mushaf-folio {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -284,6 +334,18 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   color: #80633d;
   font-size: 0.66rem;
   letter-spacing: 0.07em;
+  padding: 0 5.3rem 0.65rem;
+  border-bottom: 1px solid rgb(176 137 75 / 0.28);
+}
+
+@media (max-width: 520px) {
+  .mushaf-folio {
+    justify-content: center;
+    gap: 0.65rem;
+    padding-inline: 4.5rem;
+  }
+
+  .mushaf-folio > span:last-child { display: none; }
 }
 
 .mushaf-folio-ornament {
@@ -295,35 +357,39 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
 
 @media (prefers-reduced-motion: no-preference) {
   .mushaf-sheet.is-turning-next {
-    animation: mushaf-turn-left 0.28s ease-in both;
+    animation: mushaf-turn-right 0.18s cubic-bezier(0.45, 0, 0.8, 0.6) both;
   }
   .mushaf-sheet.is-turning-previous {
-    animation: mushaf-turn-right 0.28s ease-in both;
+    animation: mushaf-turn-left 0.18s cubic-bezier(0.45, 0, 0.8, 0.6) both;
   }
   .mushaf-sheet.is-arriving-next {
-    animation: mushaf-arrive-left 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation: mushaf-arrive-right 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
   .mushaf-sheet.is-arriving-previous {
-    animation: mushaf-arrive-right 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation: mushaf-arrive-left 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 }
 
+.mushaf-sheet.is-turning-previous,
+.mushaf-sheet.is-arriving-previous { transform-origin: left center; }
+
 @keyframes mushaf-turn-left {
-  to { opacity: 0.5; transform: perspective(900px) rotateY(-20deg) translateX(-16px); }
+  to { opacity: 0.62; transform: perspective(900px) rotateY(-16deg) translateX(-12px); }
 }
 @keyframes mushaf-turn-right {
-  to { opacity: 0.5; transform: perspective(900px) rotateY(20deg) translateX(16px); }
+  to { opacity: 0.62; transform: perspective(900px) rotateY(16deg) translateX(12px); }
 }
 @keyframes mushaf-arrive-left {
-  from { opacity: 0.65; transform: perspective(900px) rotateY(14deg) translateX(15px); }
+  from { opacity: 0.7; transform: perspective(900px) rotateY(11deg) translateX(11px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes mushaf-arrive-right {
-  from { opacity: 0.65; transform: perspective(900px) rotateY(-14deg) translateX(-15px); }
+  from { opacity: 0.7; transform: perspective(900px) rotateY(-11deg) translateX(-11px); }
   to { opacity: 1; transform: none; }
 }
 
 .mushaf-surah-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -331,26 +397,81 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   margin: 0.4rem 0 0.15rem;
   padding: 0.7rem 1rem;
   border: 1.5px solid #b0894b;
-  border-radius: 4px;
-  background: linear-gradient(180deg, #fbf6e8, #f0e2c4);
+  border-radius: 0.85rem 0.85rem 0.3rem 0.3rem;
+  background:
+    radial-gradient(circle at 50% -60%, rgb(196 154 81 / 0.26), transparent 72%),
+    linear-gradient(180deg, #fbf6e8, #f0e2c4);
   box-shadow: inset 0 0 0 3px #f3ead4, inset 0 0 0 4px #d4b57a;
+}
+
+.mushaf-surah-center {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.3rem, 2vw, 0.8rem);
+}
+
+.mushaf-surah-flourish {
+  color: #a68149;
+  font-size: 1rem;
 }
 
 .mushaf-opening {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   min-height: min(42rem, calc(100dvh - 13rem));
   margin-top: 0.75rem;
   padding: 1.5rem 0.85rem;
-  border: 2px solid #a7824d;
-  outline: 1px solid #a7824d;
-  outline-offset: -0.55rem;
+  border: 1px solid #b3945d;
+  outline: 1px solid #c9ad7b;
+  outline-offset: -0.5rem;
   background:
-    radial-gradient(circle at 50% 0, rgb(205 172 112 / 0.38), transparent 28%),
-    radial-gradient(circle at 50% 100%, rgb(205 172 112 / 0.38), transparent 28%),
-    repeating-linear-gradient(45deg, transparent 0 12px, rgb(161 121 63 / 0.045) 12px 13px),
+    radial-gradient(circle at 50% 0, rgb(205 172 112 / 0.3), transparent 28%),
+    radial-gradient(circle at 50% 100%, rgb(205 172 112 / 0.3), transparent 28%),
+    repeating-conic-gradient(from 45deg, rgb(161 121 63 / 0.035) 0deg 8deg, transparent 8deg 45deg),
     #fbf4e5;
+  background-size: auto, auto, 2rem 2rem, auto;
   box-shadow: inset 0 0 0 0.3rem #efe0bd, inset 0 0 0 0.38rem #b99358;
 }
+
+.mushaf-second {
+  position: relative;
+  margin-top: 0.75rem;
+  padding: 1.25rem 0.7rem 1.5rem;
+  border: 1px solid #b3945d;
+  background:
+    radial-gradient(ellipse at 50% 0, rgb(198 161 96 / 0.28), transparent 36%),
+    repeating-conic-gradient(from 45deg, rgb(161 121 63 / 0.025) 0deg 8deg, transparent 8deg 45deg),
+    #fbf5e9;
+  background-size: auto, 2rem 2rem, auto;
+  box-shadow: inset 0 0 0 0.3rem #efe0bd, inset 0 0 0 0.38rem #b99358;
+}
+
+.mushaf-second::before,
+.mushaf-second::after {
+  content: '۞';
+  display: block;
+  color: #9b743c;
+  font-family: var(--font-arabic);
+  font-size: 2rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.mushaf-second::before { margin-bottom: 0.8rem; }
+.mushaf-second::after { margin-top: 1rem; }
+
+.mushaf-second .mushaf-surah-head {
+  margin-inline: auto;
+  max-width: 25rem;
+  border-radius: 1.5rem 1.5rem 0.45rem 0.45rem;
+}
+
+.mushaf-second .mushaf-basmala { margin-top: 1.15rem; }
+.mushaf-second .mushaf-body { margin-top: 1.5rem; }
 
 .mushaf-opening::before,
 .mushaf-opening::after {
@@ -367,12 +488,14 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
 .mushaf-opening::after { margin: 1rem 0 0.2rem; }
 
 .mushaf-opening .mushaf-surah-head {
+  width: 100%;
   margin-inline: auto;
   max-width: 22rem;
   border-radius: 1.2rem 1.2rem 0.4rem 0.4rem;
 }
 
 .mushaf-opening .mushaf-body {
+  width: 100%;
   max-width: 30rem;
   margin: 1.25rem auto;
   padding: 0.7rem 0.5rem;
@@ -450,7 +573,7 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   margin-top: 2.5rem;
   padding-top: 1.25rem;
   border-top: 1px solid rgb(176 137 75 / 0.4);
-  direction: ltr;
+  direction: rtl;
 }
 
 .mushaf-turn button {

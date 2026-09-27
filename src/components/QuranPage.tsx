@@ -260,8 +260,8 @@ function Reader({
       setArrival(direction);
       onOpen(target.surah, target.ayah);
       window.scrollTo({ top: 0, behavior: 'auto' });
-      arrivalTimer.current = setTimeout(() => setArrival(null), reducedMotion ? 0 : 440);
-    }, reducedMotion ? 0 : 280);
+      arrivalTimer.current = setTimeout(() => setArrival(null), reducedMotion ? 0 : 280);
+    }, reducedMotion ? 0 : 180);
   };
 
   const startSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -277,7 +277,7 @@ function Reader({
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    const target = pageIndex + (dx < 0 ? 1 : -1);
+    const target = pageIndex + (dx > 0 ? 1 : -1);
     if (target < 0 || target >= data.pages.length) return;
     swiped.current = true;
     turnTo(target);
@@ -399,25 +399,31 @@ function Reader({
 
       <div
         key={page.index}
-        className={`mushaf-sheet${turning ? ` is-turning-${turning}` : ''}${arrival ? ` is-arriving-${arrival}` : ''}`}
+        className={`mushaf-sheet${page.index === 1 ? ' is-opening' : ''}${page.index === 2 ? ' is-second' : ''}${turning ? ` is-turning-${turning}` : ''}${arrival ? ` is-arriving-${arrival}` : ''}`}
         onPointerDownCapture={startSwipe}
         onPointerUpCapture={finishSwipe}
         onPointerCancelCapture={() => { swipe.current = null; }}
       >
+        <div className="mushaf-frame" aria-hidden="true">
+          <MushafCorner position="top-left" />
+          <MushafCorner position="top-right" />
+          <MushafCorner position="bottom-left" />
+          <MushafCorner position="bottom-right" />
+        </div>
         <div className="mushaf-folio" aria-label={text(`Page ${page.index} of 604`, `الصفحة ${page.index} من ٦٠٤`)}>
           <span>{text(`Page ${page.index} / 604`, `الصفحة ${page.index} / ٦٠٤`)}</span>
-          <span className="mushaf-folio-ornament" aria-hidden="true">۞</span>
+          <span className="mushaf-folio-ornament" aria-hidden="true">✧</span>
           <span>{text('The Noble Qur’an', 'القرآن الكريم')}</span>
         </div>
         {pageGroups.map(({ surah: chapter, verses }) => {
           const startsSurah = verses[0]?.ayah === 1;
           const showBasmala = startsSurah && chapter.n !== 1 && chapter.n !== 9;
           return (
-            <section key={chapter.n} className={page.index === 1 ? 'mushaf-opening' : undefined}>
+            <section key={chapter.n} className={page.index === 1 ? 'mushaf-opening' : page.index === 2 ? 'mushaf-second' : undefined}>
               {startsSurah && (
                 <div className="mushaf-surah-head">
                   <span className="mushaf-surah-side">{chapter.type === 'Meccan' ? 'مكية' : 'مدنية'}</span>
-                  <span className="arabic mushaf-surah-name">{chapter.name}</span>
+                  <span className="mushaf-surah-center"><span className="mushaf-surah-flourish" aria-hidden="true">۞</span><span className="arabic mushaf-surah-name">{chapter.name}</span><span className="mushaf-surah-flourish" aria-hidden="true">۞</span></span>
                   <span className="mushaf-surah-side tabular">{chapter.ar.length}</span>
                 </div>
               )}
@@ -454,7 +460,7 @@ function Reader({
           {nextPage ? (
             <button type="button" onClick={() => turnTo(pageIndex + 1)} aria-label={text(`Next page, ${nextPage.index}`, `الصفحة التالية، ${nextPage.index}`)}>
               <span className="mushaf-turn-kicker">{text('Next page', 'الصفحة التالية')}</span>
-              <span className="mushaf-turn-name arabic">{data.surahs[nextPage.surah - 1].name} <span aria-hidden="true">←</span></span>
+              <span className="mushaf-turn-name arabic">{data.surahs[nextPage.surah - 1].name} <span aria-hidden="true">→</span></span>
             </button>
           ) : (
             <span />
@@ -462,7 +468,7 @@ function Reader({
           {previousPage ? (
             <button type="button" onClick={() => turnTo(pageIndex - 1)} aria-label={text(`Previous page, ${previousPage.index}`, `الصفحة السابقة، ${previousPage.index}`)}>
               <span className="mushaf-turn-kicker">{text('Previous page', 'الصفحة السابقة')}</span>
-              <span className="mushaf-turn-name arabic"><span aria-hidden="true">→</span> {data.surahs[previousPage.surah - 1].name}</span>
+              <span className="mushaf-turn-name arabic"><span aria-hidden="true">←</span> {data.surahs[previousPage.surah - 1].name}</span>
             </button>
           ) : (
             <span />
@@ -507,5 +513,18 @@ function Reader({
       </div>
       )}
     </div>
+  );
+}
+
+function MushafCorner({ position }: { position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }) {
+  return (
+    <svg className={`mushaf-corner is-${position}`} viewBox="0 0 88 88" fill="none" focusable="false">
+      <path d="M5 75V30Q5 5 30 5H75M15 75V31Q15 15 31 15H75" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M22 22L32 14L42 22L32 30Z M22 22L14 32L22 42L30 32Z M32 30L42 32L32 42L30 32Z" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M30 30Q50 36 52 50M30 30Q36 50 50 52M41 13Q60 17 64 30M13 41Q17 60 30 64" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="32" cy="32" r="3" fill="currentColor" />
+      <circle cx="64" cy="31" r="2" fill="currentColor" />
+      <circle cx="31" cy="64" r="2" fill="currentColor" />
+    </svg>
   );
 }
