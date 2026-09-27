@@ -3,6 +3,7 @@ import {
   RECITERS,
   loadQuran,
   reciterById,
+  globalAyahNumber,
   type QuranBundle,
   type ReciterId,
   type Surah,
@@ -70,7 +71,7 @@ export function QuranPage({
             window.scrollTo(0, 0);
           }, 280);
         }}
-        onOpen={(n) => setOpen({ surah: n, ayah: 1 })}
+        onOpen={(n, ayah = 1) => setOpen({ surah: n, ayah })}
       />
     );
   }
@@ -194,22 +195,93 @@ function Reader({
   startAyah: number;
   leaving: boolean;
   onBack: () => void;
-  onOpen: (n: number) => void;
+  onOpen: (n: number, ayah?: number) => void;
   onReading?: (reading: boolean) => void;
 }) {
   const { quranReciter, setQuranReciter, setQuranBookmark } = useStore();
   const { isArabic, text } = useI18n();
   const dragY = useRef(0);
+  const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
+  const swiped = useRef(false);
+  const turnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const arrivalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScroll = useRef(0);
-  const [selected, setSelected] = useState(startAyah);
+  const [selected, setSelected] = useState({ surah: surah.n, ayah: startAyah });
   const [playing, setPlaying] = useState(false);
   const [tray, setTray] = useState(false);
   const [chromeOn, setChromeOn] = useState(true);
+  const [turning, setTurning] = useState<'next' | 'previous' | null>(null);
+  const [arrival, setArrival] = useState<'next' | 'previous' | null>(null);
   const playAt = useRef<{ surah: number; ayah: number } | null>(null);
 
   const basmala = data.surahs[0].ar[0];
-  const showBasmala = surah.n !== 1 && surah.n !== 9;
   const reciter = reciterById(quranReciter);
+  const pageIndex = useMemo(() => {
+    const startGlobal = globalAyahNumber(data, surah.n, startAyah);
+    return Math.max(0, data.pages.findLastIndex((candidate) =>
+      globalAyahNumber(data, candidate.surah, candidate.ayah) <= startGlobal,
+    ));
+  }, [data, surah.n, startAyah]);
+  const page = data.pages[pageIndex];
+  const nextPage = data.pages[pageIndex + 1];
+  const previousPage = data.pages[pageIndex - 1];
+  const pageGroups = useMemo(() => {
+    const groups: { surah: Surah; verses: { ayah: number; raw: string }[] }[] = [];
+    const stop = nextPage ? globalAyahNumber(data, nextPage.surah, nextPage.ayah) : 6237;
+    let position = globalAyahNumber(data, page.surah, page.ayah);
+    for (let chapter = page.surah; chapter <= data.surahs.length && position < stop; chapter += 1) {
+      const current = data.surahs[chapter - 1];
+      const firstAyah = chapter === page.surah ? page.ayah : 1;
+      const verses = [];
+      for (let ayah = firstAyah; ayah <= current.ar.length && position < stop; ayah += 1, position += 1) {
+        verses.push({ ayah, raw: current.ar[ayah - 1] });
+      }
+      groups.push({ surah: current, verses });
+    }
+    return groups;
+  }, [data, page, nextPage]);
+
+  useEffect(() => () => {
+    if (turnTimer.current) clearTimeout(turnTimer.current);
+    if (arrivalTimer.current) clearTimeout(arrivalTimer.current);
+  }, []);
+
+  const turnTo = (targetIndex: number) => {
+    if (targetIndex < 0 || targetIndex >= data.pages.length || targetIndex === pageIndex || turning) return;
+    const target = data.pages[targetIndex];
+    const direction = targetIndex > pageIndex ? 'next' : 'previous';
+    stopAyah();
+    setPlaying(false);
+    setTray(false);
+    setTurning(direction);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    turnTimer.current = setTimeout(() => {
+      setTurning(null);
+      setArrival(direction);
+      onOpen(target.surah, target.ayah);
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      arrivalTimer.current = setTimeout(() => setArrival(null), reducedMotion ? 0 : 440);
+    }, reducedMotion ? 0 : 280);
+  };
+
+  const startSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.target instanceof Element && event.target.closest('button, select')) return;
+    swipe.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    swiped.current = false;
+  };
+
+  const finishSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!start || start.id !== event.pointerId) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const target = pageIndex + (dx < 0 ? 1 : -1);
+    if (target < 0 || target >= data.pages.length) return;
+    swiped.current = true;
+    turnTo(target);
+  };
 
   useEffect(() => {
     onReading?.(true);
@@ -227,16 +299,16 @@ function Reader({
   }, [onReading]);
 
   useEffect(() => {
-    setSelected(startAyah);
+    setSelected({ surah: surah.n, ayah: startAyah });
     setQuranBookmark({ surah: surah.n, ayah: startAyah });
-    if (startAyah > 1) {
+    if (surah.n !== page.surah || startAyah !== page.ayah) {
       requestAnimationFrame(() => {
-        document.querySelector(`[data-ayah="${startAyah}"]`)?.scrollIntoView({ block: 'start' });
+        document.querySelector(`[data-ayah="${surah.n}:${startAyah}"]`)?.scrollIntoView({ block: 'center' });
       });
     } else {
       window.scrollTo(0, 0);
     }
-  }, [surah.n, startAyah, setQuranBookmark]);
+  }, [surah.n, startAyah, page.surah, page.ayah, setQuranBookmark]);
 
   useEffect(() => {
     lastScroll.current = window.scrollY;
@@ -261,15 +333,15 @@ function Reader({
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  const play = (a: number, reciterId: ReciterId = reciter.id) => {
-    setSelected(a);
+  const play = (chapter: number, a: number, reciterId: ReciterId = reciter.id) => {
+    setSelected({ surah: chapter, ayah: a });
     setTray(true);
-    setQuranBookmark({ surah: surah.n, ayah: a });
-    playAt.current = { surah: surah.n, ayah: a };
+    setQuranBookmark({ surah: chapter, ayah: a });
+    playAt.current = { surah: chapter, ayah: a };
     setPlaying(true);
     void playAyah({
       reciter: reciterId,
-      surah: surah.n,
+      surah: chapter,
       ayah: a,
       onEnded: () => {
         setPlaying(false);
@@ -289,22 +361,31 @@ function Reader({
 
   const onReciter = (id: ReciterId) => {
     setQuranReciter(id);
-    if (playing) play(selected, id);
+    if (playing) play(selected.surah, selected.ayah, id);
   };
 
-  const pick = (n: number) => {
-    setSelected(n);
+  const pick = (chapter: number, n: number) => {
+    setSelected({ surah: chapter, ayah: n });
     setTray(true);
-    setQuranBookmark({ surah: surah.n, ayah: n });
+    setQuranBookmark({ surah: chapter, ayah: n });
   };
 
   return (
     <div className={`mushaf-page${leaving ? ' is-leaving' : ''}`}>
       <header className={`mushaf-chrome${chromeOn ? '' : ' is-away'}`}>
-        <button type="button" className="mushaf-back" onClick={onBack} aria-label={text('Surahs', 'السور')}>
+        <button
+          type="button"
+          className="mushaf-back"
+          onClick={() => {
+            if (turnTimer.current) clearTimeout(turnTimer.current);
+            if (arrivalTimer.current) clearTimeout(arrivalTimer.current);
+            onBack();
+          }}
+          aria-label={text('Surahs', 'السور')}
+        >
           {isArabic ? '→' : '←'}
         </button>
-        <h1 className="arabic mushaf-title">{`سورة ${surah.name}`}</h1>
+        <h1 className="arabic mushaf-title">{`سورة ${pageGroups[0].surah.name}`}</h1>
         <button
           type="button"
           className="mushaf-recite-toggle"
@@ -316,57 +397,72 @@ function Reader({
         </button>
       </header>
 
-      <div className="mushaf-sheet">
-        <div className="mushaf-surah-head">
-          <span className="mushaf-surah-side">{surah.type === 'Meccan' ? 'مكية' : 'مدنية'}</span>
-          <span className="arabic mushaf-surah-name">{surah.name}</span>
-          <span className="mushaf-surah-side tabular">{surah.ar.length}</span>
+      <div
+        key={page.index}
+        className={`mushaf-sheet${turning ? ` is-turning-${turning}` : ''}${arrival ? ` is-arriving-${arrival}` : ''}`}
+        onPointerDownCapture={startSwipe}
+        onPointerUpCapture={finishSwipe}
+        onPointerCancelCapture={() => { swipe.current = null; }}
+      >
+        <div className="mushaf-folio" aria-label={text(`Page ${page.index} of 604`, `الصفحة ${page.index} من ٦٠٤`)}>
+          <span>{text(`Page ${page.index} / 604`, `الصفحة ${page.index} / ٦٠٤`)}</span>
+          <span className="mushaf-folio-ornament" aria-hidden="true">۞</span>
+          <span>{text('The Noble Qur’an', 'القرآن الكريم')}</span>
         </div>
-
-        {showBasmala && <p className="arabic mushaf-basmala">{basmala}</p>}
-
-        <p className="arabic mushaf-body">
-          {surah.ar.map((raw, i) => {
-            const n = i + 1;
-            const ar =
-              n === 1 && showBasmala && raw.startsWith(basmala)
-                ? raw.slice(basmala.length).trim()
-                : raw;
-            const on = selected === n;
-            const now = playing && playAt.current?.ayah === n;
-            return (
-              <span
-                key={n}
-                data-ayah={n}
-                className={`mushaf-ayah${on ? ' is-on' : ''}${now ? ' is-playing' : ''}`}
-                onPointerDown={(e) => {
-                  dragY.current = e.clientY;
-                }}
-                onPointerUp={(e) => {
-                  if (Math.abs(e.clientY - dragY.current) > 10) return;
-                  pick(n);
-                }}
-              >
-                {ar}
-                <span className="ayah-num" aria-hidden="true">
-                  {n}
-                </span>
-              </span>
-            );
-          })}
-        </p>
+        {pageGroups.map(({ surah: chapter, verses }) => {
+          const startsSurah = verses[0]?.ayah === 1;
+          const showBasmala = startsSurah && chapter.n !== 1 && chapter.n !== 9;
+          return (
+            <section key={chapter.n} className={page.index === 1 ? 'mushaf-opening' : undefined}>
+              {startsSurah && (
+                <div className="mushaf-surah-head">
+                  <span className="mushaf-surah-side">{chapter.type === 'Meccan' ? 'مكية' : 'مدنية'}</span>
+                  <span className="arabic mushaf-surah-name">{chapter.name}</span>
+                  <span className="mushaf-surah-side tabular">{chapter.ar.length}</span>
+                </div>
+              )}
+              {showBasmala && <p className="arabic mushaf-basmala">{basmala}</p>}
+              <p className="arabic mushaf-body">
+                {verses.map(({ ayah, raw }) => {
+                  const ar = ayah === 1 && showBasmala && raw.startsWith(basmala)
+                    ? raw.slice(basmala.length).trim()
+                    : raw;
+                  const on = tray && selected.surah === chapter.n && selected.ayah === ayah;
+                  const now = playing && playAt.current?.surah === chapter.n && playAt.current.ayah === ayah;
+                  return (
+                    <span
+                      key={ayah}
+                      data-ayah={`${chapter.n}:${ayah}`}
+                      className={`mushaf-ayah${on ? ' is-on' : ''}${now ? ' is-playing' : ''}`}
+                      onPointerDown={(e) => { dragY.current = e.clientY; }}
+                      onPointerUp={(e) => {
+                        if (swiped.current || Math.abs(e.clientY - dragY.current) > 10) return;
+                        pick(chapter.n, ayah);
+                      }}
+                    >
+                      {ar}
+                      <span className="ayah-num" aria-hidden="true">{ayah}</span>
+                    </span>
+                  );
+                })}
+              </p>
+            </section>
+          );
+        })}
 
         <nav className="mushaf-turn">
-          {surah.n < 114 ? (
-            <button type="button" onClick={() => onOpen(surah.n + 1)}>
-              {data.surahs[surah.n].name} ←
+          {nextPage ? (
+            <button type="button" onClick={() => turnTo(pageIndex + 1)} aria-label={text(`Next page, ${nextPage.index}`, `الصفحة التالية، ${nextPage.index}`)}>
+              <span className="mushaf-turn-kicker">{text('Next page', 'الصفحة التالية')}</span>
+              <span className="mushaf-turn-name arabic">{data.surahs[nextPage.surah - 1].name} <span aria-hidden="true">←</span></span>
             </button>
           ) : (
             <span />
           )}
-          {surah.n > 1 ? (
-            <button type="button" onClick={() => onOpen(surah.n - 1)}>
-              → {data.surahs[surah.n - 2].name}
+          {previousPage ? (
+            <button type="button" onClick={() => turnTo(pageIndex - 1)} aria-label={text(`Previous page, ${previousPage.index}`, `الصفحة السابقة، ${previousPage.index}`)}>
+              <span className="mushaf-turn-kicker">{text('Previous page', 'الصفحة السابقة')}</span>
+              <span className="mushaf-turn-name arabic"><span aria-hidden="true">→</span> {data.surahs[previousPage.surah - 1].name}</span>
             </button>
           ) : (
             <span />
@@ -378,7 +474,7 @@ function Reader({
       <div className="mushaf-tray">
         <div className="mushaf-tray-row">
           <p className="tabular text-[12px] text-[#6b5740]">
-            {surah.n}:{selected}
+            {selected.surah}:{selected.ayah}
           </p>
           <select
             className="mushaf-reciter"
@@ -398,12 +494,12 @@ function Reader({
           <button
             type="button"
             className="mushaf-play"
-            onClick={() => (playing ? stop() : play(selected))}
+            onClick={() => (playing ? stop() : play(selected.surah, selected.ayah))}
           >
             {playing ? text('Pause', 'إيقاف مؤقت') : text('Recite this ayah', 'تلاوة هذه الآية')}
           </button>
         </div>
-        <p className="mushaf-tray-en">{surah.en[selected - 1]}</p>
+        <p className="mushaf-tray-en">{data.surahs[selected.surah - 1].en[selected.ayah - 1]}</p>
         <p className="mushaf-tray-note">{text('This ayah only · Saheeh International', 'هذه الآية فقط · ترجمة صحيح إنترناشونال')}</p>
         <button type="button" className="mushaf-tray-close" onClick={() => setTray(false)}>
           {text('Close', 'إغلاق')}

@@ -83,8 +83,7 @@ const TABS: { id: Page; label: string; labelAr: string; icon: ReactNode }[] = [
 
 /**
  * Bottom dock. On Times it folds with scroll: full at the top, short once you
- * leave the top. Tapping the short pill pins it open until you collapse it or
- * return to the top.
+ * leave the top. It unfolds again when the page returns to the top.
  */
 const TOP = 24;
 const NAV_ITEM_COUNT = TABS.length + 1;
@@ -107,7 +106,6 @@ export function TabBar({
   const bar = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const items = useRef(new Map<Page, HTMLButtonElement>());
-  const pinned = useRef(false);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [lens, setLens] = useState<{ left: number; width: number } | null>(null);
@@ -118,7 +116,6 @@ export function TabBar({
 
   useEffect(() => {
     if (page !== 'times') {
-      pinned.current = false;
       setCollapsed(false);
     }
   }, [page]);
@@ -129,9 +126,8 @@ export function TabBar({
       if (document.body.classList.contains('reading-mushaf')) return;
       const atTop = window.scrollY <= TOP;
       if (atTop) {
-        pinned.current = false;
         setCollapsed((c) => (c ? false : c));
-      } else if (!pinned.current) {
+      } else {
         setCollapsed((c) => (c ? c : true));
       }
     };
@@ -176,22 +172,13 @@ export function TabBar({
     scrollEl.scrollTo({ left: target, behavior: collapsed || reducedMotion ? 'auto' : 'smooth' });
   }, [page, innerW, collapsed]);
 
-  const expand = () => {
-    haptic('soft');
-    pinned.current = true;
-    setCollapsed(false);
-  };
-
   const select = (id: Page) => {
     if (collapsed) {
-      expand();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     haptic('tick');
     if (id === 'times' && page === 'times') {
-      if (window.scrollY <= TOP) return;
-      pinned.current = false;
-      setCollapsed(true);
       return;
     }
     onChange(id);
@@ -199,7 +186,7 @@ export function TabBar({
 
   const openDevotions = () => {
     if (collapsed) {
-      expand();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     haptic('tick');
@@ -237,7 +224,7 @@ export function TabBar({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                expand();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
           )}
@@ -263,9 +250,7 @@ export function TabBar({
                 aria-hidden={collapsed && tab.id !== 'times'}
                 tabIndex={collapsed ? -1 : undefined}
                 aria-label={
-                  tab.id === 'times' && page === 'times' && !collapsed
-                    ? text('Collapse navigation', 'طي شريط التنقل')
-                    : isArabic ? tab.labelAr : tab.label
+                  isArabic ? tab.labelAr : tab.label
                 }
                 onPointerDown={() => onIntent?.(tab.id)}
                 onPointerEnter={() => onIntent?.(tab.id)}

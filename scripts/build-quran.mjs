@@ -59,12 +59,28 @@ function parseMeta(xml) {
 
 const arabic = parsePipe(readFileSync(join(srcDir, 'quran-uthmani.txt'), 'utf8'));
 const english = parsePipe(readFileSync(join(srcDir, 'en.sahih.txt'), 'utf8'));
-const meta = parseMeta(readFileSync(join(srcDir, 'quran-data.xml'), 'utf8'));
+const metadata = readFileSync(join(srcDir, 'quran-data.xml'), 'utf8');
+const meta = parseMeta(metadata);
+const pages = [...metadata.matchAll(/<page index="(\d+)" sura="(\d+)" aya="(\d+)"\s*\/>/g)].map((match) => ({
+  index: Number(match[1]),
+  surah: Number(match[2]),
+  ayah: Number(match[3]),
+}));
 
 const errors = [];
 if (CANONICAL.length !== 114) errors.push(`canonical list is ${CANONICAL.length}, not 114`);
 if (CANONICAL.reduce((a, b) => a + b, 0) !== 6236) errors.push('canonical sum is not 6236');
 if (meta.length !== 114) errors.push(`metadata has ${meta.length} surahs, not 114`);
+if (pages.length !== 604) errors.push(`metadata has ${pages.length} pages, not 604`);
+let previousPageStart = 0;
+for (const [i, page] of pages.entries()) {
+  const start = meta.slice(0, page.surah - 1).reduce((sum, surah) => sum + surah.ayahs, 0) + page.ayah;
+  if (page.index !== i + 1 || start <= previousPageStart || !arabic.has(`${page.surah}:${page.ayah}`)) {
+    errors.push(`invalid start for page ${i + 1}`);
+  }
+  previousPageStart = start;
+}
+if (pages[0]?.surah !== 1 || pages[0]?.ayah !== 1) errors.push('page one must start at 1:1');
 if (arabic.size !== 6236) errors.push(`Arabic has ${arabic.size} ayahs, not 6236`);
 if (english.size !== 6236) errors.push(`English has ${english.size} ayahs, not 6236`);
 
@@ -112,6 +128,7 @@ const out = {
   arabic: 'Uthmani (Hafs)',
   translation: 'Saheeh International',
   license: 'CC BY 3.0 — Tanzil Project. Arabic text must not be changed. https://tanzil.net',
+  pages,
   surahs,
 };
 

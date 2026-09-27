@@ -13,6 +13,7 @@ export interface QuranBundle {
   arabic: string;
   translation: string;
   license: string;
+  pages: { index: number; surah: number; ayah: number }[];
   surahs: Surah[];
 }
 
@@ -53,5 +54,4 @@ export function loadQuran(): Promise<QuranBundle> {
   bundle ??= import('../data/quran.json').then((mod) => mod.default as QuranBundle);
   return bundle;
 }
-
 
