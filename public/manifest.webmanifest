@@ -4,29 +4,29 @@
   "description": "Prayer times from the sun, on your device.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#080c1a",
+  "background_color": "#f5ede1",
   "theme_color": "#080c1a",
   "icons": [
     {
-      "src": "/icon-192.png?v=20260927-gold-clock",
+      "src": "/miqat-gold-clock-192-20260928.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png?v=20260927-gold-clock",
+      "src": "/miqat-gold-clock-512-20260928.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png?v=20260927-gold-clock",
+      "src": "/miqat-gold-clock-512-20260928.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icon-1024.png?v=20260927-gold-clock",
+      "src": "/miqat-gold-clock-1024-20260928.png",
       "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any"

@@ -83,7 +83,8 @@ const TABS: { id: Page; label: string; labelAr: string; icon: ReactNode }[] = [
 
 /**
  * Bottom dock. On Times it folds with scroll: full at the top, short once you
- * leave the top. It unfolds again when the page returns to the top.
+ * leave the top. A tap can pin it open mid-page; returning to the top resets
+ * that pin so subsequent scrolling folds it automatically again.
  */
 const TOP = 24;
 const NAV_ITEM_COUNT = TABS.length + 1;
@@ -106,6 +107,7 @@ export function TabBar({
   const bar = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const items = useRef(new Map<Page, HTMLButtonElement>());
+  const pinned = useRef(false);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [lens, setLens] = useState<{ left: number; width: number } | null>(null);
@@ -116,6 +118,7 @@ export function TabBar({
 
   useEffect(() => {
     if (page !== 'times') {
+      pinned.current = false;
       setCollapsed(false);
     }
   }, [page]);
@@ -126,8 +129,9 @@ export function TabBar({
       if (document.body.classList.contains('reading-mushaf')) return;
       const atTop = window.scrollY <= TOP;
       if (atTop) {
+        pinned.current = false;
         setCollapsed((c) => (c ? false : c));
-      } else {
+      } else if (!pinned.current) {
         setCollapsed((c) => (c ? c : true));
       }
     };
@@ -172,9 +176,15 @@ export function TabBar({
     scrollEl.scrollTo({ left: target, behavior: collapsed || reducedMotion ? 'auto' : 'smooth' });
   }, [page, innerW, collapsed]);
 
+  const expand = () => {
+    haptic('soft');
+    pinned.current = true;
+    setCollapsed(false);
+  };
+
   const select = (id: Page) => {
     if (collapsed) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      expand();
       return;
     }
     haptic('tick');
@@ -186,7 +196,7 @@ export function TabBar({
 
   const openDevotions = () => {
     if (collapsed) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      expand();
       return;
     }
     haptic('tick');
@@ -224,7 +234,7 @@ export function TabBar({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                expand();
               }}
             />
           )}

@@ -18,9 +18,8 @@ const SHELL_ENTRIES = ['index.html', 'src/components/VerifySheet.tsx'];
 const SHELL_FILES = [
   '/index.html',
   '/manifest.webmanifest',
-  '/icon.svg',
   '/favicon-32.png',
-  '/icon-192.png',
+  '/miqat-gold-clock-192-20260928.png',
   '/apple-touch-icon.png',
 ];
 

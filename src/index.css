@@ -1377,6 +1377,15 @@ body.reading-mushaf.show-app-chrome .tabbar-dock {
   transition-duration: 0.34s;
 }
 
+.counter-button.native-counter {
+  transition: none;
+}
+
+.counter-button.native-counter.is-ios-release::after {
+  opacity: 0.42;
+  transition-duration: 0.38s;
+}
+
 .devotion-history {
   content-visibility: auto;
   contain: layout paint style;

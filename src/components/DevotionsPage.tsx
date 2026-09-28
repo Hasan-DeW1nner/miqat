@@ -680,6 +680,7 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
   const visual = useRef<HTMLElement | null>(null);
   const pointer = useRef<{ id: number; x: number; y: number; moved: boolean; startedAt: number } | null>(null);
   const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const motionAnimation = useRef<Animation | null>(null);
   const counted = useRef(false);
   const MOVE_THRESHOLD = 12;
   const QUICK_PRESS_MS = 260;
@@ -687,11 +688,49 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
   useEffect(() => { nativeSwitch.current?.setAttribute('switch', ''); }, []);
   useEffect(() => () => {
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
+    motionAnimation.current?.cancel();
   }, []);
 
   const clearMotion = () => {
-    visual.current?.classList.remove('is-pressing', 'is-quick-release');
+    visual.current?.classList.remove('is-pressing', 'is-quick-release', 'is-ios-release');
     releaseTimer.current = null;
+  };
+
+  const releaseIOSMotion = (quick: boolean) => {
+    const node = visual.current;
+    if (!node) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      motionAnimation.current?.cancel();
+      motionAnimation.current = null;
+      clearMotion();
+      return;
+    }
+    const from = getComputedStyle(node).transform;
+    motionAnimation.current?.cancel();
+    node.classList.remove('is-pressing');
+    node.classList.add('is-ios-release');
+    const frames = quick
+      ? [
+          { transform: from, offset: 0 },
+          { transform: 'translateY(-2px) scale(0.996) translateZ(0)', offset: 0.46 },
+          { transform: 'translateY(-8px) translateZ(0)', offset: 1 },
+        ]
+      : [
+          { transform: from },
+          { transform: 'translateY(-8px) translateZ(0)' },
+        ];
+    const animation = node.animate(frames, {
+      duration: quick ? 460 : 440,
+      easing: 'cubic-bezier(0.18, 0.84, 0.22, 1)',
+      fill: 'forwards',
+    });
+    motionAnimation.current = animation;
+    animation.onfinish = () => {
+      if (motionAnimation.current !== animation) return;
+      animation.cancel();
+      motionAnimation.current = null;
+      node.classList.remove('is-ios-release');
+    };
   };
 
   const countOnce = () => {
@@ -702,9 +741,13 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
 
   const startPress = (event: React.PointerEvent<HTMLElement>) => {
     if (!event.isPrimary || event.button !== 0) return;
+    const node = visual.current;
+    const from = isIOS && node ? getComputedStyle(node).transform : '';
+    motionAnimation.current?.cancel();
+    motionAnimation.current = null;
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
     releaseTimer.current = null;
-    visual.current?.classList.remove('is-quick-release');
+    node?.classList.remove('is-quick-release', 'is-ios-release');
     pointer.current = {
       id: event.pointerId,
       x: event.clientX,
@@ -713,7 +756,13 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
       startedAt: performance.now(),
     };
     counted.current = false;
-    visual.current?.classList.add('is-pressing');
+    node?.classList.add('is-pressing');
+    if (isIOS && node && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      motionAnimation.current = node.animate(
+        [{ transform: from }, { transform: 'translateY(5px) scale(0.985) translateZ(0)' }],
+        { duration: 500, easing: 'cubic-bezier(0.18, 0.84, 0.22, 1)', fill: 'forwards' },
+      );
+    }
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* WebKit may own the native switch capture. */ }
   };
 
@@ -723,7 +772,8 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
     const distance = Math.hypot(event.clientX - active.x, event.clientY - active.y);
     if (distance <= MOVE_THRESHOLD) return;
     active.moved = true;
-    clearMotion();
+    if (isIOS) releaseIOSMotion(false);
+    else clearMotion();
   };
 
   const finishPress = (event: React.PointerEvent<HTMLElement>, cancelled = false) => {
@@ -733,14 +783,19 @@ function CounterButton({ phrase, onPress, locked = false }: { phrase: string; on
     if (!cancelled && !active.moved) {
       countOnce();
       const elapsed = performance.now() - active.startedAt;
-      if (elapsed < QUICK_PRESS_MS) {
+      if (isIOS) {
+        releaseIOSMotion(elapsed < QUICK_PRESS_MS);
+      } else if (elapsed < QUICK_PRESS_MS) {
         visual.current?.classList.remove('is-pressing');
         visual.current?.classList.add('is-quick-release');
         releaseTimer.current = setTimeout(clearMotion, Math.max(90, MIN_MOTION_MS - elapsed));
       } else {
         clearMotion();
       }
-    } else {
+    } else if (!active.moved) {
+      if (isIOS) releaseIOSMotion(false);
+      else clearMotion();
+    } else if (!isIOS) {
       clearMotion();
     }
     try {
