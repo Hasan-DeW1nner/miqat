@@ -225,20 +225,45 @@ Awqaf already decides the angle, the rounding, the terrain and every seasonal
 adjustment. Where they publish a table, the app carries it and shows it — no calculation
 involved, so it matches the mosque exactly rather than approximately.
 
+It keeps itself current. A daily Vercel job (`functions/refresh.ts`, 01:30 UTC) pulls any newly
+published days from the feed, runs them through the checks below, and stores the result in the
+database. The app fetches that from `/api/timetable` and prefers it over the copy bundled into
+the build, so new months reach users without a deploy. The bundled copy is only the floor for a
+first or offline visit; refresh it before a deploy with:
+
 ```bash
-npm --prefix miqat run build:timetable   # fetch, validate, write src/data
+npm run build:timetable   # fetch, validate, write src/data
 ```
 
-Nothing enters that file untested. Each day must run forwards, must not be the feed's
-fixed-90-minute-Isha filler, must sit within eight minutes of our own astronomy, and must not
-jump away from its neighbours. A day that fails any check is left out and the app calculates
-it instead — a gap is recoverable, a wrong prayer time is not.
+Nothing enters the table untested (`src/lib/timetableBuild.ts`, shared by both paths). Each day
+must run forwards, must not be the feed's fixed-90-minute-Isha filler, must sit within eight
+minutes of our own astronomy, and must not jump away from its neighbours. Each month must also
+average within about a minute of the sun: a feed that is a steady minute or two off passes every
+per-day check, which is how Dubai's October 2026 was caught: Gulf News was serving Ajman's table
+under Dubai's name, identical on all 31 days. A day or month that fails is left out and the app
+calculates it instead; a gap is recoverable, a wrong prayer time is not. Held months are listed
+in the table's `held` array and in `/api/audit` under `refresh.heldMonths`.
 
-Calculation remains the fallback: for towns with no published table, dates past the end of
-it, and the rest of the world. The app says which one you are looking at.
+For Dubai there is a second publisher. When the Gulf News month fails, the current month is read
+from Khaleej Times (`src/lib/khaleejFeed.ts`) and put through the same checks; it is recorded in
+the table's `sources` array. Only Dubai: Khaleej Times' other emirates are derived (Abu Dhabi is
+Dubai plus four minutes flat), not published per city.
 
-Coverage is Jan–Sep 2026 for eight cities, 2,157 days. Awqaf has not published the rest of
-the year yet; the daily audit says when they do.
+The refresh only ever adds. If the feed disagrees with a day that is already live, or drops one,
+that city-month is left untouched and the run reports it as `refused`. It can be called by anyone
+but only runs if the last run is over six hours old (the cron secret overrides that).
+
+```
+GET /api/refresh     → run if stale, else report the last run
+GET /api/timetable   → the stored table, or 204 and the app uses its bundled copy
+```
+
+Each run checks every month from now to the end of next year that is not yet complete, so a new
+year's table is picked up the day Awqaf publishes it. Calculation remains the
+fallback for towns with no published table, dates past the end of it, and the rest of the world;
+the app says which one you are looking at. Coverage today is Jan–Oct 2026 for eight cities
+(Dubai October from Khaleej Times; Abu Dhabi 6 Oct is a feed gap and is calculated). As of
+October 2026 the feed serves only placeholders from November onward, 2027 included.
 
 ## The standing accuracy watch
 

@@ -5,6 +5,7 @@ import { LocationSheet } from './components/LocationSheet';
 import { TabBar, type Page } from './components/TabBar';
 import { PageShell } from './components/PageShell';
 import { useOfflineKeeper } from './lib/useOfflineKeeper';
+import { useTimetableVersion } from './lib/useTimetable';
 import { Onboarding } from './components/Onboarding';
 import { Segmented } from './components/Segmented';
 import { Countdown } from './components/Countdown';
@@ -180,6 +181,8 @@ export default function App() {
   const civil = civilDateIn(timezone, now);
   const dayKey = `${civil.year}-${civil.month}-${civil.day}`;
   const iqama = viewMode === 'iqama';
+  // Changes when the server's fresher Awqaf timetable arrives, so the day below recomputes.
+  const timetableVersion = useTimetableVersion();
 
   // Recomputed only when the day, the location or a setting changes — not every tick.
   const days = useMemo(() => {
@@ -203,7 +206,7 @@ export default function App() {
       tomorrowAdhan: m.adhan,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [place, settings, timezone, dayKey, iqama]);
+  }, [place, settings, timezone, dayKey, iqama, timetableVersion]);
 
   /*
    * Sunrise stays in the countdown even in Iqama view. Skipping it made the

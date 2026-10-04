@@ -9,13 +9,15 @@ import { mkdir } from 'node:fs/promises';
  */
 await mkdir('api', { recursive: true });
 
-await build({
-  entryPoints: ['functions/audit.ts'],
-  outfile: 'api/audit.js',
-  bundle: true,
-  platform: 'node',
-  target: 'node20',
-  format: 'esm',
-  minify: false,
-  logLevel: 'info',
-});
+for (const name of ['audit', 'refresh']) {
+  await build({
+    entryPoints: [`functions/${name}.ts`],
+    outfile: `api/${name}.js`,
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    minify: false,
+    logLevel: 'info',
+  });
+}

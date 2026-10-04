@@ -1,6 +1,7 @@
 import { FEED_SOURCE, STATIONS, fetchMonth, toMinutes } from '../src/lib/awqafFeed';
 import { DEFAULT_SETTINGS, PRAYER_ORDER, computeDay, type PrayerKey } from '../src/lib/prayer';
-import timetable from '../src/data/uae-timetable.json';
+import { currentTimetable, setRuntimeTimetable } from '../src/lib/officialTimetable';
+import { loadStored } from './serverDb';
 
 export const config = { maxDuration: 60 };
 
@@ -19,6 +20,19 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
 const SERVER_SECRET = process.env.MIQAT_SERVER_SECRET ?? '';
 const CRON_SECRET = process.env.CRON_SECRET ?? '';
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL ?? '';
+
+interface HeldMonth {
+  city: string;
+  year: number;
+  month: number;
+  reason: string;
+}
+/** The table users actually get: the stored one once loaded, else the bundled one. */
+const shipped = () => currentTimetable().years;
+/** City-months the build refused to ship because the feed sat off the sun. */
+const held = (): HeldMonth[] => currentTimetable().held;
+const isHeld = (city: string, year: number, month: number) =>
+  held().some((h) => h.city === city && h.year === year && h.month === month);
 
 /** Matches the bar `npm run verify` holds the engine to. */
 const TOLERANCE_MINUTES = 3;
@@ -81,30 +95,37 @@ interface StationReport {
  * feed that has been caught serving filler does not get to update prayer times
  * unattended.
  */
-async function coverage(year: number) {
-  const shipped = timetable.cities as Record<string, Record<string, number[]>>;
+async function coverage(year: number, month: number) {
   let have = 0;
   let fresh = 0;
-  const months = new Set<number>();
+  const months = new Set<string>();
 
   for (const station of STATIONS) {
-    const rows = shipped[station.city] ?? {};
-    have += Object.keys(rows).length;
-    for (let month = 1; month <= 12; month += 1) {
-      const known = Object.keys(rows).filter((k) => k.startsWith(`${month}-`)).length;
+    have += Object.keys(shipped()[String(year)]?.[station.city] ?? {}).length;
+
+    // This month and the next three, across New Year, so a rollover is seen
+    // coming rather than discovered on the day.
+    for (let step = 0; step < 4; step += 1) {
+      const y = year + Math.floor((month - 1 + step) / 12);
+      const m = ((month - 1 + step) % 12) + 1;
+      // A held month is not news: the feed has it, the build refused it.
+      if (isHeld(station.city, y, m)) continue;
+
+      const rows = shipped()[String(y)]?.[station.city] ?? {};
+      const known = Object.keys(rows).filter((k) => k.startsWith(`${m}-`)).length;
       // Only look where the shipped table is thin; a full month needs no check.
       if (known >= 28) continue;
-      const result = await fetchMonth(station, year, month).catch(() => null);
+      const result = await fetchMonth(station, y, m).catch(() => null);
       if (!result) continue;
-      const extra = result.days.filter((d) => !rows[`${month}-${d.day}`]).length;
+      const extra = result.days.filter((d) => !rows[`${m}-${d.day}`]).length;
       if (extra > 0) {
         fresh += extra;
-        months.add(month);
+        months.add(`${y}-${String(m).padStart(2, '0')}`);
       }
     }
   }
 
-  return { shippedDays: have, newDays: fresh, newMonths: [...months].sort((a, b) => a - b) };
+  return { shippedDays: have, newDays: fresh, newMonths: [...months].sort() };
 }
 
 async function runAudit() {
@@ -147,6 +168,24 @@ async function runAudit() {
   for (const result of months) {
     notes.push(...result.notes);
     if (result.days.length === 0) continue;
+
+    // The build held this month back because the feed itself looks wrong, so
+    // the app calculates it and a disagreement with the feed is expected. Say
+    // so, but do not fail the watch over the feed's own fault.
+    const heldMonth = held().find((h) => h.city === result.station.city && h.year === year && h.month === month);
+    if (heldMonth) {
+      notes.push(`${heldMonth.city} ${year}-${String(month).padStart(2, '0')} is held back (${heldMonth.reason}); the app calculates it`);
+      continue;
+    }
+    // Likewise a month taken from the second publisher because this feed failed
+    // for it: comparing against the feed would only re-report the feed's fault.
+    const alt = currentTimetable().sources.find(
+      (s) => s.city === result.station.city && s.year === year && s.month === month,
+    );
+    if (alt) {
+      notes.push(`${alt.city} ${year}-${String(month).padStart(2, '0')} uses ${alt.source}; the Gulf News month failed validation`);
+      continue;
+    }
 
     const settings = {
       ...DEFAULT_SETTINGS,
@@ -192,12 +231,12 @@ async function runAudit() {
     });
   }
 
-  const published = await coverage(year);
+  const published = await coverage(year, month);
   if (published.newDays > 0) {
     notes.push(
-      `Awqaf has published ${published.newDays} day(s) the shipped timetable does not carry ` +
-        `(month${published.newMonths.length > 1 ? 's' : ''} ${published.newMonths.join(', ')}). ` +
-        `Run: npm --prefix miqat run build:timetable`,
+      `Awqaf has published ${published.newDays} day(s) the stored timetable does not carry yet ` +
+        `(${published.newMonths.join(', ')}). ` +
+        `The daily refresh (/api/refresh) ships them.`,
     );
   }
 
@@ -258,7 +297,9 @@ export default async function handler(request: NodeRequest, response: NodeRespon
     // Public read of the last result — accuracy statistics, nothing personal.
     try {
       const latest = await rpc('miqat_latest_audit', { p_secret: SERVER_SECRET });
-      send(latest ?? { status: 'no audit has run yet' });
+      // The refresh job's last outcome rides along so one URL shows the whole picture.
+      const refresh = await loadStored().then((r) => r.meta).catch(() => null);
+      send({ ...((latest as object | null) ?? { status: 'no audit has run yet' }), refresh });
     } catch (error) {
       send({ error: (error as Error).message }, 502);
     }
@@ -266,6 +307,9 @@ export default async function handler(request: NodeRequest, response: NodeRespon
   }
 
   try {
+    // Judge exactly what users get, which is the stored table, not the bundled one.
+    const stored = await loadStored().catch(() => null);
+    if (stored?.doc) setRuntimeTimetable(stored.doc);
     const summary = await runAudit();
     await rpc('miqat_record_audit', { p_secret: SERVER_SECRET, p_payload: summary });
     const alerted = summary.ok ? null : await alert(summary);

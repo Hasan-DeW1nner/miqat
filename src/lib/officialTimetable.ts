@@ -10,9 +10,14 @@ import type { PrayerKey } from './prayer';
  * the mosque. Calculation remains the fallback — for towns without a published
  * table, for dates beyond it, and for the rest of the world.
  *
- * Every day in here passed validation at build time (`npm run build:timetable`).
- * Days the feed got wrong are simply absent, and those fall through to the
- * calculation: a gap is recoverable, a wrong prayer time is not.
+ * Every day in here passed validation (src/lib/timetableBuild.ts). Days the feed
+ * got wrong are simply absent, and those fall through to the calculation: a gap
+ * is recoverable, a wrong prayer time is not.
+ *
+ * Two copies exist. The one bundled with the app (`npm run build:timetable`) is
+ * the floor that works on a first or offline visit. A daily server job keeps a
+ * fresher copy in the database, served from /api/timetable; once the app has it,
+ * that copy is used instead, so new months reach users without a redeploy.
  */
 
 /** The UAE keeps UTC+4 all year, so a wall-clock time is one instant. */
@@ -21,6 +26,118 @@ const UTC_OFFSET_HOURS = 4;
 const MAX_DISTANCE_KM = 40;
 
 const ORDER = table.order as PrayerKey[];
+
+/** year -> city -> "month-day" -> minutes since midnight, one entry per prayer. */
+type Years = Record<string, Record<string, Record<string, number[]>>>;
+const BUNDLED_YEARS: Years = (table as unknown as { years?: Years }).years ?? {};
+const BUNDLED_BUILT: string = (table as unknown as { built?: string }).built ?? '';
+
+interface HeldMonth {
+  city: string;
+  year: number;
+  month: number;
+  reason: string;
+}
+/** A city-month taken from a second publisher because the main feed failed. */
+interface AltSource {
+  city: string;
+  year: number;
+  month: number;
+  source: string;
+}
+export interface TimetableDoc {
+  built: string;
+  order: string[];
+  years: Years;
+  held?: HeldMonth[];
+  sources?: AltSource[];
+}
+
+/** The fresher copy fetched from the server, once the app has one. */
+let runtime: TimetableDoc | null = null;
+let version = 0;
+const listeners = new Set<() => void>();
+const CACHE_KEY = 'miqat.timetable.v1';
+
+/** Never trust a document just because it arrived: check its shape. */
+function isTimetableDoc(doc: unknown): doc is TimetableDoc {
+  if (!doc || typeof doc !== 'object') return false;
+  const d = doc as Partial<TimetableDoc>;
+  if (typeof d.built !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.built)) return false;
+  if (!Array.isArray(d.order) || d.order.join() !== ORDER.join()) return false;
+  if (!d.years || typeof d.years !== 'object') return false;
+  let days = 0;
+  for (const cities of Object.values(d.years)) {
+    for (const rows of Object.values(cities ?? {})) {
+      for (const [key, minutes] of Object.entries(rows ?? {})) {
+        days += 1;
+        if (!/^\d{1,2}-\d{1,2}$/.test(key)) return false;
+        if (!Array.isArray(minutes) || minutes.length !== ORDER.length) return false;
+        if (!minutes.every((m) => Number.isInteger(m) && m >= 0 && m < 1440)) return false;
+      }
+    }
+  }
+  return days < 20000;
+}
+
+/**
+ * Use a fresher table than the bundled one. Ignored if it is malformed or older
+ * than what shipped, so a stale cache can never hide newer bundled data.
+ */
+export function setRuntimeTimetable(doc: unknown): boolean {
+  if (!isTimetableDoc(doc)) return false;
+  if (doc.built < BUNDLED_BUILT) return false;
+  if (runtime && doc.built < runtime.built) return false;
+  runtime = doc;
+  version += 1;
+  listeners.forEach((listener) => listener());
+  return true;
+}
+
+export const timetableVersion = () => version;
+export function subscribeTimetable(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Which table is in force: the fetched one if there is one, else the bundled one. */
+export function currentTimetable(): { built: string; years: Years; held: HeldMonth[]; sources: AltSource[] } {
+  const doc = runtime ?? (table as unknown as TimetableDoc);
+  return {
+    built: runtime ? runtime.built : BUNDLED_BUILT,
+    years: runtime ? runtime.years : BUNDLED_YEARS,
+    held: doc.held ?? [],
+    sources: doc.sources ?? [],
+  };
+}
+
+/**
+ * Pick up the server's table: the last good copy from this device first, so it
+ * works offline and instantly, then the network. Every failure is silent; the
+ * bundled table is always there underneath.
+ */
+export async function loadRuntimeTimetable(): Promise<void> {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) setRuntimeTimetable(JSON.parse(cached));
+  } catch {
+    /* storage can be blocked or empty */
+  }
+  try {
+    const response = await fetch('/api/timetable');
+    if (!response.ok || response.status === 204) return;
+    const doc: unknown = await response.json();
+    if (setRuntimeTimetable(doc)) {
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(doc));
+      } catch {
+        /* over quota or blocked: fine, it just will not be cached */
+      }
+    }
+  } catch {
+    /* offline or the function is down */
+  }
+}
 
 function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const rad = Math.PI / 180;
@@ -62,9 +179,10 @@ export function officialTimes(
   if (!city) return null;
 
   const year = date.getFullYear();
-  if (year !== table.year) return null;
-
-  const rows = (table.cities as Record<string, Record<string, number[]>>)[city];
+  // A fetched table is authoritative for every year it carries; a year it does
+  // not carry falls back to the bundled one.
+  const years = runtime && runtime.years[String(year)] ? runtime.years : BUNDLED_YEARS;
+  const rows = years[String(year)]?.[city];
   const minutes = rows?.[`${date.getMonth() + 1}-${date.getDate()}`];
   if (!minutes || minutes.length !== ORDER.length) return null;
 
@@ -80,4 +198,4 @@ export function officialTimes(
 }
 
 export const TIMETABLE_SOURCE = table.source;
-export const TIMETABLE_YEAR = table.year;
+export const TIMETABLE_YEARS = Object.keys(BUNDLED_YEARS).map(Number);

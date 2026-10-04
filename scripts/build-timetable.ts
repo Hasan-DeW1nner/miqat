@@ -1,134 +1,121 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { STATIONS, fetchMonth, toMinutes, type OfficialDay } from '../src/lib/awqafFeed';
-import { DEFAULT_SETTINGS, PRAYER_ORDER, computeDay, type PrayerKey } from '../src/lib/prayer';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { STATIONS, fetchMonth } from '../src/lib/awqafFeed';
+import { ALT_SOURCE, fetchAltMonth, hasAltSource } from '../src/lib/khaleejFeed';
+import { PRAYER_ORDER } from '../src/lib/prayer';
+import { evaluateMonth, type HeldMonth, type Rejection, type Rows } from '../src/lib/timetableBuild';
 
 /**
- * Builds the shipped copy of the official Awqaf timetable.
+ * Builds the bundled baseline copy of the official Awqaf timetable.
  *
  *   npm run build:timetable
  *
+ * The live app does not depend on this: a daily server job (functions/refresh.ts)
+ * keeps the up-to-date table in the database and the app fetches it. This
+ * bundled copy is what a first visit, or an offline one, falls back on. Run it
+ * before a deploy to keep that fallback fresh.
+ *
  * Awqaf already accounts for the season, the convention and the rounding, so
  * where their table exists the app should simply show it rather than try to
- * re-derive it. This fetches it, refuses anything that fails a check, and
- * writes what survives into src/data.
- *
- * Nothing here trusts the feed. It has been caught serving a generic
- * fixed-90-minute-Isha filler part-way through a month for a single city, and
- * carrying typo'd times on individual days. A day that fails any check is
- * dropped, and the app computes that day instead — a gap is recoverable, a
- * wrong prayer time is not.
+ * re-derive it. This fetches it, refuses anything that fails the checks in
+ * src/lib/timetableBuild.ts, and writes what survives into src/data. It covers
+ * this year and next, and keeps last year's rows until they are a year old.
  */
 
-const YEAR = 2026;
-const fmt = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Dubai',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-});
+const OUT = 'src/data/uae-timetable.json';
 
-interface Rejection {
-  city: string;
-  month: number;
-  day: number;
-  reason: string;
-}
-
-const rejections: Rejection[] = [];
-
-/** Every check a day must pass before it is allowed to reach a user. */
-function validate(
-  station: (typeof STATIONS)[number],
-  month: number,
-  row: OfficialDay,
-  neighbours: { before?: OfficialDay; after?: OfficialDay },
-): boolean {
-  const reject = (reason: string) => {
-    rejections.push({ city: station.city, month, day: row.day, reason });
-    return false;
-  };
-
-  const minutes = PRAYER_ORDER.map((k) => toMinutes(row[k]));
-
-  // 1. The day must run forwards.
-  for (let i = 1; i < minutes.length; i += 1) {
-    if (minutes[i] <= minutes[i - 1]) return reject(`${PRAYER_ORDER[i]} is not after ${PRAYER_ORDER[i - 1]}`);
-  }
-
-  // 2. The generic filler pins Isha exactly 90 minutes after Maghrib.
-  if (toMinutes(row.isha) - toMinutes(row.maghrib) === 90) return reject('placeholder data (90-minute Isha)');
-
-  // 3. Sanity against our own astronomy. A few minutes apart is expected and
-  //    fine; a large gap means the feed handed us the wrong city or date.
-  const settings = { ...DEFAULT_SETTINGS, method: 'Dubai' as const, elevation: station.elevation };
-  const computed = computeDay(station.latitude, station.longitude, new Date(YEAR, month - 1, row.day, 12), settings);
-  for (const key of PRAYER_ORDER) {
-    const drift = Math.abs(toMinutes(fmt.format(computed.times[key])) - toMinutes(row[key]));
-    if (drift > 8) return reject(`${key} is ${drift} min from the calculation`);
-  }
-
-  // 4. No day may jump away from its neighbours; the sun does not do that.
-  const { before, after } = neighbours;
-  if (before && after) {
-    for (const key of PRAYER_ORDER) {
-      const expected = (toMinutes(before[key]) + toMinutes(after[key])) / 2;
-      if (Math.abs(toMinutes(row[key]) - expected) > 3) return reject(`${key} jumps away from its neighbours`);
-    }
-  }
-
-  return true;
-}
+const THIS_YEAR = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dubai', year: 'numeric' }).format(new Date()));
+const THIS_MONTH = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dubai', month: 'numeric' }).format(new Date()));
+const YEARS = [THIS_YEAR, THIS_YEAR + 1];
 
 async function main() {
   mkdirSync('src/data', { recursive: true });
 
-  const cities: Record<string, Record<string, number[]>> = {};
+  const previous = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : null;
+
+  const years: Record<string, Record<string, Rows>> = {};
+  const held: HeldMonth[] = [];
+  const sources: { city: string; year: number; month: number; source: string }[] = [];
+  const rejections: Rejection[] = [];
   let kept = 0;
   let seen = 0;
 
-  for (const station of STATIONS) {
-    cities[station.city] = {};
-    for (let month = 1; month <= 12; month += 1) {
-      const result = await fetchMonth(station, YEAR, month).catch(() => null);
-      if (!result || result.days.length === 0) continue;
+  for (const year of YEARS) {
+    const cities: Record<string, Rows> = {};
 
-      const days = result.days;
-      for (let i = 0; i < days.length; i += 1) {
-        seen += 1;
-        const ok = validate(station, month, days[i], { before: days[i - 1], after: days[i + 1] });
-        if (!ok) continue;
-        const key = `${month}-${days[i].day}`;
-        // Minutes since midnight: compact, and gzips well because it is smooth.
-        cities[station.city][key] = PRAYER_ORDER.map((k) => toMinutes(days[i][k as PrayerKey]));
-        kept += 1;
+    for (const station of STATIONS) {
+      cities[station.city] = {};
+
+      for (let month = 1; month <= 12; month += 1) {
+        const result = await fetchMonth(station, year, month).catch(() => null);
+        let outcome = result && result.days.length ? evaluateMonth(station, year, month, result.days) : null;
+
+        // Where the main feed fails for the current month, try the second
+        // publisher (src/lib/khaleejFeed.ts) under the same checks.
+        const current = year === THIS_YEAR && month === THIS_MONTH;
+        if (current && hasAltSource(station.city) && (!outcome || outcome.held)) {
+          const days = await fetchAltMonth(station.city, month).catch(() => []);
+          const alt = days.length >= 20 ? evaluateMonth(station, year, month, days) : null;
+          if (alt && !alt.held) {
+            outcome = alt;
+            sources.push({ city: station.city, year, month, source: ALT_SOURCE });
+            console.log(`${station.city} ${year}-${month}: main feed failed the checks, using ${ALT_SOURCE}`);
+          }
+        }
+        if (!outcome) continue;
+
+        seen += outcome.seen;
+        rejections.push(...outcome.rejections);
+        if (outcome.held) {
+          held.push(outcome.held);
+          continue;
+        }
+        Object.assign(cities[station.city], outcome.rows);
+        kept += Object.keys(outcome.rows).length;
       }
+
+      const count = Object.keys(cities[station.city]).length;
+      console.log(`${String(year)} ${station.city.padEnd(16)} ${String(count).padStart(3)} days accepted`);
     }
-    const count = Object.keys(cities[station.city]).length;
-    console.log(`${station.city.padEnd(16)} ${String(count).padStart(3)} days accepted`);
+
+    // A year the feed has nothing real for is left out entirely, so the app
+    // calculates it rather than carrying empty shells.
+    if (Object.values(cities).some((rows) => Object.keys(rows).length > 0)) {
+      years[String(year)] = cities;
+    }
   }
+
+  // Keep last year's rows so looking back across New Year still shows the
+  // published times; they were validated when they were built.
+  const lastYear = String(THIS_YEAR - 1);
+  if (previous?.years?.[lastYear] && !years[lastYear]) years[lastYear] = previous.years[lastYear];
 
   const doc = {
     source: 'General Authority of Islamic Affairs and Endowments (Awqaf), as published by Gulf News',
     url: 'https://gulfnews.com/prayer-times',
-    year: YEAR,
     timezone: 'Asia/Dubai',
     built: new Date().toISOString().slice(0, 10),
     order: PRAYER_ORDER,
     note:
-      'Minutes since midnight, keyed "month-day". Every day here passed validation; ' +
-      'days the feed got wrong are absent on purpose and the app computes those.',
+      'Minutes since midnight, keyed "month-day" under each year. Every day here passed validation; ' +
+      'days and months the feed got wrong are absent on purpose and the app computes those.',
     stations: STATIONS.map((s) => ({
       city: s.city,
       latitude: s.latitude,
       longitude: s.longitude,
     })),
-    cities,
+    years,
+    held,
+    sources,
   };
 
-  writeFileSync('src/data/uae-timetable.json', JSON.stringify(doc));
+  writeFileSync(OUT, JSON.stringify(doc));
   const bytes = JSON.stringify(doc).length;
 
-  console.log(`\n${kept} of ${seen} days accepted · ${rejections.length} rejected · ${(bytes / 1024).toFixed(0)} kB raw`);
+  console.log(`\n${kept} of ${seen} days accepted · ${rejections.length} rejected · ${held.length} city-months held · ${(bytes / 1024).toFixed(0)} kB raw`);
+  if (held.length) {
+    console.log('\nheld back (the app calculates these instead):');
+    for (const h of held) console.log(`  ${h.city} ${h.year}-${String(h.month).padStart(2, '0')}: ${h.reason}`);
+  }
   if (rejections.length) {
     console.log('\nrejected:');
     const grouped = new Map<string, number>();
